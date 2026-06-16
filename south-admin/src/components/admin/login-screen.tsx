@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { ref, get } from 'firebase/database';
+import { signInWithEmailAndPassword, signOut } from '@/lib/supabase-auth';
+import { ref, get } from '@/lib/db-compat';
 import { auth, database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
 import { Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';

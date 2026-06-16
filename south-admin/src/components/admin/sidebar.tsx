@@ -42,7 +42,7 @@ import {
   Monitor,
   Ticket,
 } from 'lucide-react';
-import { signOut } from 'firebase/auth';
+import { signOut } from '@/lib/supabase-auth';
 import { auth } from '@/lib/firebase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';

@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { database } from '@/lib/firebase';
-import { ref, get } from 'firebase/database';
+import { ref, get } from '@/lib/db-compat';
 import {
   isBiometricAvailable,
   authenticateWithBiometric,

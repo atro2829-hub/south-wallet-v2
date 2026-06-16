@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAdminStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { database } from '@/lib/firebase';
-import { ref, onValue, get } from 'firebase/database';
+import { ref, onValue, get } from '@/lib/db-compat';
 import {
   RefreshCw,
   Server,
@@ -51,7 +51,7 @@ export default function ApiSyncPanel() {
   const handleSync = async (providerId: string) => {
     setSyncing(providerId);
     try {
-      const { set: firebaseSet } = await import('firebase/database');
+      const { set: firebaseSet } = await import('@/lib/db-compat');
       await firebaseSet(ref(database, `apiProviders/${providerId}/syncStatus`), 'syncing');
       await firebaseSet(ref(database, `apiProviders/${providerId}/lastSync`), new Date().toISOString());
       // Simulate sync completion

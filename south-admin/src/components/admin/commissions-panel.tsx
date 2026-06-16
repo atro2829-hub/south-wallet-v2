@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, push, update, remove, set } from 'firebase/database';
+import { ref, onValue, push, update, remove, set } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId } from '@/lib/utils';

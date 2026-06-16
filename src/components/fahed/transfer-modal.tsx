@@ -25,7 +25,7 @@ import { useAppStore } from '@/lib/store';
 import { currencySymbols, currencyNames, currencyFlags, currencyBadgeColors, generateReference } from '@/lib/utils';
 import { useToast } from '@/components/fahed/toast-provider';
 import { database } from '@/lib/firebase';
-import { ref, get, update, push, runTransaction } from 'firebase/database';
+import { ref, get, update, push, runTransaction } from '@/lib/db-compat';
 import { sendFCMDirect } from '@/lib/fcm-sender';
 import { supabase, supabaseAdmin, supabaseService } from '@/lib/supabase';
 

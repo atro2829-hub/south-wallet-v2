@@ -1,5 +1,5 @@
 import { database } from '@/lib/firebase';
-import { ref, set, update, get } from 'firebase/database';
+import { ref, set, update, get } from '@/lib/db-compat';
 import { sendFCMDirect } from '@/lib/fcm-sender';
 
 export interface NotificationPayload {

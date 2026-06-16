@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { database } from '@/lib/firebase';
-import { ref, get, onValue, query, orderByChild, equalTo, limitToLast } from 'firebase/database';
+import { ref, get, onValue, query, orderByChild, equalTo, limitToLast } from '@/lib/db-compat';
 import { useAppStore } from '@/lib/store';
 import type { ServiceProvider, ProductPackage, ServiceCategory } from '@/lib/store';
 

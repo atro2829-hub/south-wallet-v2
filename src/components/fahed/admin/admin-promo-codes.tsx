@@ -6,7 +6,7 @@ import { Plus, ToggleLeft, ToggleRight, Tag, Trash2 } from 'lucide-react';
 import { useAdminContext } from './admin-context';
 import { currencySymbols, generateReference } from '@/lib/utils';
 import type { PromoCodeData } from './admin-types';
-import { ref, set, remove } from 'firebase/database';
+import { ref, set, remove } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 export default function AdminPromoCodes() {

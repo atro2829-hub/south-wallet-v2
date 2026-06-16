@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ref, push, set } from 'firebase/database';
+import { ref, push, set } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { useStore } from '@/lib/store';
 import { formatBalance, currencyNames } from '@/lib/utils';

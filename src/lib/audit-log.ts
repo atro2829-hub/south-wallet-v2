@@ -3,7 +3,7 @@
  * Stores audit events in Firebase at auditLog/{autoId}
  */
 
-import { ref, push, set, get, query, orderByChild, limitToLast, startAt, endAt } from 'firebase/database';
+import { ref, push, set, get, query, orderByChild, limitToLast, startAt, endAt } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 // Predefined action types

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Search, Edit3, Save, X, ToggleLeft, ToggleRight, Trash2, Package, Upload } from 'lucide-react';
 import { useAdminContext } from './admin-context';
 import { currencySymbols } from '@/lib/utils';
-import { ref, update, set } from 'firebase/database';
+import { ref, update, set } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { generateReference } from '@/lib/utils';
 

@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { ref, get, onValue } from 'firebase/database';
+import { onAuthStateChanged } from '@/lib/supabase-auth';
+import { ref, get, onValue } from '@/lib/db-compat';
 import { auth, database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
 import LoginScreen from '@/components/admin/login-screen';
@@ -155,7 +155,7 @@ export default function AdminApp() {
             console.log('Admin push registration success:', token.value);
             // Save FCM token to Firebase for admin
             try {
-              const { ref, set: firebaseSet } = await import('firebase/database');
+              const { ref, set: firebaseSet } = await import('@/lib/db-compat');
               await firebaseSet(ref(database, `users/${adminUser.uid}/fcmToken`), token.value);
             } catch (e) {
               console.warn('Failed to save admin FCM token:', e);
@@ -201,7 +201,7 @@ export default function AdminApp() {
               const currentToken = await getToken(messaging, { vapidKey });
 
               if (currentToken) {
-                const { ref, set: firebaseSet } = await import('firebase/database');
+                const { ref, set: firebaseSet } = await import('@/lib/db-compat');
                 await firebaseSet(ref(database, `users/${adminUser.uid}/fcmToken`), currentToken);
                 console.log('Admin web FCM token saved');
               }

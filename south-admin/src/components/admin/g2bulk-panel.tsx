@@ -43,7 +43,7 @@ import {
   type G2BulkCategory,
   type G2BulkProduct,
 } from '@/lib/g2bulk';
-import { onValue, ref } from 'firebase/database';
+import { onValue, ref } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 export default function G2BulkPanel() {

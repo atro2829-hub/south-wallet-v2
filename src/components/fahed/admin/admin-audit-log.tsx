@@ -6,7 +6,7 @@ import { Search, Filter, FileText, Download, RefreshCw, ChevronDown, X } from 'l
 import { useAdminContext } from './admin-context';
 import { auditActionLabels, auditActionColors, AuditAction, fetchAuditLog, type AuditLogEntry } from '@/lib/audit-log';
 import { timeAgo, formatNumber } from '@/lib/utils';
-import { onValue, ref } from 'firebase/database';
+import { onValue, ref } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { exportToCSV } from '@/lib/export-reports';
 

@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type Order } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
-import { ref, set, update } from 'firebase/database';
+import { ref, set, update } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { useToast } from '@/components/fahed/toast-provider';
 import { serviceIcons } from '@/lib/service-icons';

@@ -7,7 +7,7 @@ import { ArrowRight, HelpCircle, Shield, Info, ChevronDown, ChevronUp, ChevronLe
 import { useAppStore } from '@/lib/store';
 import { LOGO_BASE64 } from '@/lib/logo';
 import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue } from '@/lib/db-compat';
 
 type LegalTab = 'faq' | 'privacy' | 'about';
 

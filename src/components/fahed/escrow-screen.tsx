@@ -12,7 +12,7 @@ import {
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, formatNumber, formatBalance, generateReference } from '@/lib/utils';
 import { database } from '@/lib/firebase';
-import { ref, set, get, update, onValue, off, runTransaction } from 'firebase/database';
+import { ref, set, get, update, onValue, off, runTransaction } from '@/lib/db-compat';
 import {
   getOrCreateEscrowChat,
   getEscrowChatMessages,

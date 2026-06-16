@@ -5,7 +5,7 @@ import { supabase, DbBanner } from '@/lib/supabase';
 import { storage } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, cn } from '@/lib/utils';
-import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from '@/lib/supabase';
 
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';

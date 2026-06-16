@@ -45,8 +45,8 @@ import {
 import { useAppStore } from '@/lib/store';
 import { database } from '@/lib/firebase';
 import { auth } from '@/lib/firebase';
-import { ref, get, onValue, update } from 'firebase/database';
-import { sendPasswordResetEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
+import { ref, get, onValue, update } from '@/lib/db-compat';
+import { sendPasswordResetEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from '@/lib/supabase-auth';
 import { LOGO_BASE64 } from '@/lib/logo';
 
 interface SectionItem {

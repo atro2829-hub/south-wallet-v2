@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ref, get, update } from 'firebase/database';
+import { ref, get, update } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
 import { cn } from '@/lib/utils';

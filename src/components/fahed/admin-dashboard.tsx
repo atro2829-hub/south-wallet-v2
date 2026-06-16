@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue } from '@/lib/db-compat';
 import { formatNumber } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 import type { Order } from '@/lib/store';

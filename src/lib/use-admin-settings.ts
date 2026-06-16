@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { database } from '@/lib/firebase';
-import { ref, onValue, get, Unsubscribe } from 'firebase/database';
+import { ref, onValue, get, Unsubscribe } from '@/lib/db-compat';
 import {
   useAppStore,
   type CardColor,

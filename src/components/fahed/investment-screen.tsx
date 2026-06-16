@@ -11,7 +11,7 @@ import {
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, formatNumber, formatBalance } from '@/lib/utils';
 import { LOGO_BASE64 } from '@/lib/logo';
-import { ref, get, update, set as firebaseSet, onValue, off, runTransaction } from 'firebase/database';
+import { ref, get, update, set as firebaseSet, onValue, off, runTransaction } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 interface FirebaseInvestmentPlan {

@@ -9,7 +9,7 @@
  */
 
 import { database } from '@/lib/firebase';
-import { ref, get, update } from 'firebase/database';
+import { ref, get, update } from '@/lib/db-compat';
 
 // ── Platform Detection ──────────────────────────────────────────────
 function isNativePlatform(): boolean {

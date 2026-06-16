@@ -437,3 +437,207 @@ export async function saveG2BulkSettingsToSupabase(settings: Record<string, unkn
   if (error) { console.error('Error saving G2Bulk settings:', error); return false; }
   return true;
 }
+
+// =====================================================
+// SUPABASE STORAGE HELPERS (Firebase-compat)
+// =====================================================
+
+export const STORAGE_BUCKETS = {
+  avatars: 'avatars',
+  banners: 'banners',
+  providers: 'providers',
+  products: 'products',
+  general: 'general',
+  kycDocuments: 'kyc-documents',
+  wallet: 'Wallet',
+} as const;
+
+export type StorageBucketName = typeof STORAGE_BUCKETS[keyof typeof STORAGE_BUCKETS];
+
+export const storage = {
+  upload: async (
+    bucket: StorageBucketName,
+    path: string,
+    file: File | Blob | ArrayBuffer,
+    contentType?: string,
+  ): Promise<{ path: string; publicUrl: string | null; error: string | null }> => {
+    try {
+      const options: any = {};
+      if (contentType) options.contentType = contentType;
+      const { data, error } = await supabaseAdmin.storage.from(bucket).upload(path, file, options);
+      if (error) return { path: '', publicUrl: null, error: error.message };
+      let publicUrl: string | null = null;
+      if (bucket !== STORAGE_BUCKETS.kycDocuments) {
+        const { data: urlData } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
+        publicUrl = urlData?.publicUrl || null;
+      }
+      return { path: data?.path || path, publicUrl, error: null };
+    } catch (err: any) {
+      return { path: '', publicUrl: null, error: err.message || 'Upload failed' };
+    }
+  },
+
+  delete: async (bucket: StorageBucketName, path: string): Promise<{ success: boolean; error: string | null }> => {
+    try {
+      const { error } = await supabaseAdmin.storage.from(bucket).remove([path]);
+      if (error) return { success: false, error: error.message };
+      return { success: true, error: null };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Delete failed' };
+    }
+  },
+
+  getPublicUrl: (bucket: StorageBucketName, path: string): string => {
+    const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
+    return data?.publicUrl || '';
+  },
+
+  list: async (bucket: StorageBucketName, folder: string = '', limit: number = 100) => {
+    try {
+      const { data, error } = await supabaseAdmin.storage
+        .from(bucket)
+        .list(folder, { limit, sortBy: { column: 'created_at', order: 'desc' } });
+      if (error) return { files: [], error: error.message };
+      return { files: data || [], error: null };
+    } catch (err: any) {
+      return { files: [], error: err.message || 'List failed' };
+    }
+  },
+};
+
+// Firebase Storage-compatible wrappers
+export function ref(_storageInstance: unknown, path: string): { bucket: string; path: string; fullPath: string } {
+  const cleanPath = path.replace(/^gs:\/\/[^/]+\//, '').replace(/^\/+/, '');
+  const parts = cleanPath.split('/');
+  const knownBuckets = Object.values(STORAGE_BUCKETS);
+  const firstSeg = parts[0];
+  let bucket = 'general';
+  let filePath = cleanPath;
+  if (knownBuckets.includes(firstSeg as StorageBucketName)) {
+    bucket = firstSeg;
+    filePath = parts.slice(1).join('/');
+  }
+  return { bucket, path: filePath, fullPath: `${bucket}/${filePath}` };
+}
+
+export { ref as storageRef };
+
+export async function uploadBytesResumable(
+  r: { bucket: string; path: string },
+  data: Blob | Uint8Array | ArrayBuffer | File,
+  metadata?: { contentType?: string }
+): Promise<{ ref: typeof r; metadata: { contentType?: string; size: number } }> {
+  const contentType = metadata?.contentType ||
+    (data instanceof File ? data.type : 'application/octet-stream');
+  const result = await storage.upload(
+    r.bucket as StorageBucketName,
+    r.path,
+    data as Blob | ArrayBuffer,
+    contentType
+  );
+  if (result.error) throw new Error(result.error);
+  return { ref: r, metadata: { contentType, size: (data as Blob).size || 0 } };
+}
+
+export async function getDownloadURL(r: { bucket: string; path: string }): Promise<string> {
+  return storage.getPublicUrl(r.bucket as StorageBucketName, r.path);
+}
+
+export async function deleteObject(r: { bucket: string; path: string }): Promise<void> {
+  await storage.delete(r.bucket as StorageBucketName, r.path);
+}
+
+// =====================================================
+// SUPABASE SERVICE SHIM (used by supabase-auth.ts)
+// =====================================================
+
+export const supabaseService = {
+  /** Generate a unique 6-digit card_number not yet present in the users table. */
+  async generateUniqueCardNumber(maxAttempts = 100): Promise<string> {
+    for (let i = 0; i < maxAttempts; i++) {
+      const prefix = 10 + Math.floor(i / 5);
+      if (prefix > 99) break;
+      const random4 = Math.floor(1000 + Math.random() * 9000).toString();
+      const candidate = String(prefix) + random4;
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('card_number', candidate)
+        .maybeSingle();
+      if (!error && !data) {
+        return candidate;
+      }
+    }
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  },
+
+  async getUserById(id: string) {
+    const { data, error } = await supabaseAdmin.from('users').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  async getUserByFirebaseUid(firebaseUid: string) {
+    const { data, error } = await supabaseAdmin.from('users').select('*').eq('firebase_uid', firebaseUid).maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
+
+  async getUserByCardNumber(cardNumber: string) {
+    const { data, error } = await supabaseAdmin.from('users').select('*').eq('card_number', cardNumber).maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
+
+  async createUser(user: Record<string, unknown>) {
+    const { data, error } = await supabaseAdmin.from('users').insert(user).select().single();
+    if (error) throw error;
+    return data;
+  },
+
+  async updateUser(id: string, updates: Record<string, unknown>) {
+    const { data, error } = await supabaseAdmin.from('users').update(updates).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  },
+
+  async ensureUser(firebaseUid: string, data: Record<string, unknown>) {
+    try {
+      const existing = await this.getUserByFirebaseUid(firebaseUid);
+      const userData: Record<string, unknown> = {
+        firebase_uid: firebaseUid,
+        email: (data.email as string) || null,
+        phone: (data.phone as string) || null,
+        display_name: (data.displayName as string) || '',
+        first_name: (data.firstName as string) || '',
+        second_name: (data.secondName as string) || '',
+        third_name: (data.thirdName as string) || '',
+        family_name: (data.familyName as string) || '',
+        avatar_url: (data.avatar as string) || '',
+        role: (data.role as string) || 'user',
+        is_active: true,
+        is_blocked: false,
+        updated_at: new Date().toISOString(),
+      };
+      if (existing) {
+        if (data.userId && !existing.card_number) {
+          userData.card_number = data.userId;
+        }
+        const { error } = await supabaseAdmin.from('users').update(userData).eq('id', existing.id);
+        if (error) console.error('[ensureUser] update failed:', error);
+      } else {
+        let cardNumber = (data.userId as string) || '';
+        if (!cardNumber) cardNumber = await this.generateUniqueCardNumber();
+        userData.id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : undefined;
+        userData.card_number = cardNumber;
+        userData.card_issued_at = new Date().toISOString();
+        userData.kyc_status = 'pending';
+        userData.created_at = new Date().toISOString();
+        const { error } = await supabaseAdmin.from('users').insert(userData);
+        if (error) console.error('[ensureUser] insert failed:', error);
+      }
+    } catch (err) {
+      console.error('[ensureUser] error:', err);
+    }
+  },
+};

@@ -4,7 +4,7 @@
  * Simulates Firebase Function triggers for email delivery
  */
 
-import { ref, push, set, get, update, remove } from 'firebase/database';
+import { ref, push, set, get, update, remove } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { currencySymbols } from '@/lib/utils';
 

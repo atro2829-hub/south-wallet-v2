@@ -15,7 +15,7 @@ import { supabase, supabaseAdmin } from '@/lib/supabase';
 // Firebase kept ONLY as a secondary broadcast channel for legacy clients.
 // The PRIMARY source of truth is the Supabase `maintenance` table — user apps subscribe to it.
 import { database } from '@/lib/firebase';
-import { ref, get, set } from 'firebase/database';
+import { ref, get, set } from '@/lib/db-compat';
 
 interface MaintenanceRow {
   id: string;

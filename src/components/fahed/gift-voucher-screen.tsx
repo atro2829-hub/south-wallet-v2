@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, currencyNames, currencyBadgeColors, timeAgo } from '@/lib/utils';
-import { ref, get, set as firebaseSet, update, onValue, off, runTransaction } from 'firebase/database';
+import { ref, get, set as firebaseSet, update, onValue, off, runTransaction } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 interface UserGiftCode {

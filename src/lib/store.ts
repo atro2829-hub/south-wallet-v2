@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { auth } from '@/lib/firebase';
-import { signOut } from 'firebase/auth';
+import { signOut } from '@/lib/supabase-auth';
 import { isBiometricEnabledForUser } from '@/lib/biometric';
 import { supabaseService } from '@/lib/supabase';
 

@@ -1383,3 +1383,74 @@ export const storage = {
     return { url: result.publicUrl, error: result.error };
   },
 };
+
+// =====================================================
+// FIREBASE STORAGE COMPATIBLE WRAPPERS
+// =====================================================
+// These exist so code that previously imported { ref, uploadBytesResumable,
+// getDownloadURL, deleteObject } from 'firebase/storage' can keep the same
+// call sites, now routed to Supabase Storage under the hood.
+
+/**
+ * Create a storage reference. The returned object captures the bucket + path
+ * so uploadBytesResumable / getDownloadURL / deleteObject can act on it.
+ *
+ * Usage (Firebase-style):
+ *   const r = storageRef(storage, 'banners/banner1.png');
+ *   await uploadBytesResumable(r, file);
+ *   const url = await getDownloadURL(r);
+ */
+export function ref(storageInstance: unknown, path: string): { bucket: string; path: string; fullPath: string } {
+  // Strip leading 'gs://bucket/' if present
+  const cleanPath = path.replace(/^gs:\/\/[^/]+\//, '').replace(/^\/+/, '');
+  const parts = cleanPath.split('/');
+  // If the first segment matches a known bucket name, treat it as bucket; else default to 'general'
+  const knownBuckets = Object.values(STORAGE_BUCKETS);
+  const firstSeg = parts[0];
+  let bucket = 'general';
+  let filePath = cleanPath;
+  if (knownBuckets.includes(firstSeg as StorageBucketName)) {
+    bucket = firstSeg;
+    filePath = parts.slice(1).join('/');
+  }
+  return { bucket, path: filePath, fullPath: `${bucket}/${filePath}` };
+}
+
+/** Alias for `ref` so `import { ref as storageRef }` from supabase.ts works. */
+export { ref as storageRef };
+
+/**
+ * Upload bytes (resumable-style API). Returns a snapshot with a ref.
+ */
+export async function uploadBytesResumable(
+  r: { bucket: string; path: string },
+  data: Blob | Uint8Array | ArrayBuffer | File,
+  metadata?: { contentType?: string }
+): Promise<{ ref: typeof r; metadata: { contentType?: string; size: number } }> {
+  const contentType = metadata?.contentType ||
+    (data instanceof File ? data.type : 'application/octet-stream');
+  const result = await storage.upload(
+    r.bucket as StorageBucketName,
+    r.path,
+    data as Blob | ArrayBuffer,
+    contentType
+  );
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  return { ref: r, metadata: { contentType, size: (data as Blob).size || 0 } };
+}
+
+/**
+ * Get the public URL for a storage object.
+ */
+export async function getDownloadURL(r: { bucket: string; path: string }): Promise<string> {
+  return storage.getPublicUrl(r.bucket as StorageBucketName, r.path);
+}
+
+/**
+ * Delete a storage object.
+ */
+export async function deleteObject(r: { bucket: string; path: string }): Promise<void> {
+  await storage.delete(r.bucket as StorageBucketName, r.path);
+}

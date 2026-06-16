@@ -12,7 +12,7 @@
  */
 
 import { database } from '@/lib/firebase';
-import { ref, push, set } from 'firebase/database';
+import { ref, push, set } from '@/lib/db-compat';
 
 // ─── Types ───
 

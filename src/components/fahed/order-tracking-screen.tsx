@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type Order } from '@/lib/store';
 import { formatNumber, currencySymbols, currencyBadgeColors, transactionTypeLabels } from '@/lib/utils';
-import { ref, onValue, update, set } from 'firebase/database';
+import { ref, onValue, update, set } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { generateReference } from '@/lib/utils';
 

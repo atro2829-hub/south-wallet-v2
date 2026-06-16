@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { ref, update, push } from 'firebase/database';
+import { ref, update, push } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, generateId, cn } from '@/lib/utils';
@@ -45,7 +45,14 @@ export default function KYCPanel() {
   const handleApprove = async () => {
     if (!selected) return;
     try {
-      await update(ref(database, `users/${selected.uid}`), { kycStatus: 'verified' });
+      // Update Supabase users table with snake_case fields
+      await update(ref(database, `users/${selected.uid}`), {
+        kyc_status: 'verified',
+        id_verified_at: new Date().toISOString(),
+        id_verified_by: adminUser?.uid || null,
+        id_rejection_reason: '',
+        updated_at: new Date().toISOString(),
+      });
       try { await notifyKycStatus(selected.uid, 'verified'); } catch {}
       await push(ref(database, 'ownerSettings/activityLog'), {
         id: generateId(), type: 'admin', action: 'توثيق حساب',
@@ -60,7 +67,14 @@ export default function KYCPanel() {
   const handleReject = async () => {
     if (!selected) return;
     try {
-      await update(ref(database, `users/${selected.uid}`), { kycStatus: 'rejected', kycRejectReason: reason });
+      // Update Supabase users table with snake_case fields + rejection reason
+      await update(ref(database, `users/${selected.uid}`), {
+        kyc_status: 'rejected',
+        id_rejection_reason: reason || '',
+        id_verified_at: new Date().toISOString(),
+        id_verified_by: adminUser?.uid || null,
+        updated_at: new Date().toISOString(),
+      });
       try { await notifyKycStatus(selected.uid, 'rejected'); } catch {}
       await push(ref(database, 'ownerSettings/activityLog'), {
         id: generateId(), type: 'admin', action: 'رفض توثيق',

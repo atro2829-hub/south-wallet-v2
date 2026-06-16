@@ -406,7 +406,7 @@ export default function ExchangeScreen() {
         console.warn('Supabase balance update failed, trying Firebase fallback:', balanceErr);
 
         // Firebase fallback
-        const { runTransaction: fbRunTransaction, ref: fbRef, get: fbGet, update: fbUpdate } = await import('firebase/database');
+        const { runTransaction: fbRunTransaction, ref: fbRef, get: fbGet, update: fbUpdate } = await import('@/lib/db-compat');
         const { database } = await import('@/lib/firebase');
 
         const fromBalanceField = `balance${fromCurrency}` as 'balanceYER' | 'balanceSAR' | 'balanceUSD';

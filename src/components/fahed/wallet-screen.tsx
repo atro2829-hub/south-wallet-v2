@@ -31,7 +31,7 @@ import type { CardColor } from '@/lib/store';
 import { formatBalance, formatNumber, currencySymbols, currencyNames, currencyBadgeColors, timeAgo, transactionTypeLabels, transactionTypeColors } from '@/lib/utils';
 import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
 import { database } from '@/lib/firebase';
-import { ref, get, onValue } from 'firebase/database';
+import { ref, get, onValue } from '@/lib/db-compat';
 
 type FilterTab = 'all' | 'incoming' | 'outgoing' | 'orders' | 'deposit' | 'withdraw';
 

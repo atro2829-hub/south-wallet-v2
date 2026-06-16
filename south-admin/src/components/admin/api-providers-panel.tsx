@@ -4,7 +4,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ref, onValue, update, remove, set, push } from 'firebase/database';
+import { ref, onValue, update, remove, set, push } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { supabase } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';

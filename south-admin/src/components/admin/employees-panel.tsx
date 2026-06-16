@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { database } from '@/lib/firebase';
-import { ref, get, set, update, remove, onValue, push } from 'firebase/database';
+import { ref, get, set, update, remove, onValue, push } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 
 interface Employee {

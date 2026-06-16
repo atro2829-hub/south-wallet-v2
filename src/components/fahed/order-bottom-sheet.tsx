@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type ServiceProvider, type ProductPackage, type Order } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
-import { ref, push, set, get, update, runTransaction } from 'firebase/database';
+import { ref, push, set, get, update, runTransaction } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { useToast } from '@/components/fahed/toast-provider';
 // Products are now loaded from Supabase via store

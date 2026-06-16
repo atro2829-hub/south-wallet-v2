@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type ServiceProvider, type ProductPackage, type Order } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, currencyNames, generateReference, formatNumber, timeAgo, compressBase64Image, defaultExchangeRates } from '@/lib/utils';
-import { ref, set, get, update, remove, push, onValue } from 'firebase/database';
+import { ref, set, get, update, remove, push, onValue } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { LOGO_BASE64 } from '@/lib/logo';
 

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type PromoCode, type GiftCode } from '@/lib/store';
 import { currencySymbols, currencyNames, currencyBadgeColors, timeAgo } from '@/lib/utils';
-import { ref, onValue, get, update, runTransaction } from 'firebase/database';
+import { ref, onValue, get, update, runTransaction } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 export default function PromoScreen() {

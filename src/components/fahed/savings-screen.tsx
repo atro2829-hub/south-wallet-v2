@@ -22,7 +22,7 @@ import {
 import { useAppStore } from '@/lib/store';
 import { formatNumber, currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
 import { database } from '@/lib/firebase';
-import { ref, set, remove } from 'firebase/database';
+import { ref, set, remove } from '@/lib/db-compat';
 
 const iconOptions = [
   { id: 'house', label: 'منزل', icon: Home, color: '#5C1A1B' },

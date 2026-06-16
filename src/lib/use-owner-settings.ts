@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue } from '@/lib/db-compat';
 import { useAppStore, defaultOwnerSettings } from '@/lib/store';
 import type { OwnerSettings } from '@/lib/store';
 

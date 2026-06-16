@@ -21,7 +21,7 @@ import {
 import { useAppStore } from '@/lib/store';
 import { timeAgo } from '@/lib/utils';
 import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue } from '@/lib/db-compat';
 import {
   handleNotificationTap,
   parseNavigationTarget,

@@ -2,7 +2,7 @@
 // Manages G2Bulk API settings, syncs categories/products
 // Uses Firebase for settings (backward compatible) and Supabase for synced data
 
-import { get, ref, update, set } from 'firebase/database';
+import { get, ref, update, set } from '@/lib/db-compat';
 import { database } from './firebase';
 import { supabase } from './supabase';
 

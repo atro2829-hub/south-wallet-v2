@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useAdminContext } from './admin-context';
 import { currencySymbols, generateReference } from '@/lib/utils';
-import { ref, set, get, update, remove, onValue } from 'firebase/database';
+import { ref, set, get, update, remove, onValue } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import type { ServiceProvider } from '@/lib/store';
 

@@ -23,8 +23,8 @@ export function generateUserId(): string {
 
 // Generate userId with expandable prefix (11, 12, 20, etc.)
 // Call this async version for guaranteed unique IDs across the system
-export async function generateUniqueUserId(database: import('firebase/database').Database): Promise<string> {
-  const { ref, get } = await import('firebase/database');
+export async function generateUniqueUserId(database: import('@/lib/db-compat').Database): Promise<string> {
+  const { ref, get } = await import('@/lib/db-compat');
   
   // Try prefixes in order: 10, 11, 12, 13, ... 19, 20, 21, ... 99
   for (let prefix = 10; prefix <= 99; prefix++) {

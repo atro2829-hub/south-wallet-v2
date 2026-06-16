@@ -6,8 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, Eye, EyeOff, ArrowLeft, ShieldCheck, Phone, Heart, CreditCard, X, KeyRound, Fingerprint, CheckCircle2, FileText, Shield, MessageCircle, Facebook, Twitter, Instagram, Send, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { auth, database } from '@/lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { ref, get, update, onValue } from 'firebase/database';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from '@/lib/supabase-auth';
+import { ref, get, update, onValue } from '@/lib/db-compat';
 import { generateUserId, generateUniqueUserId } from '@/lib/utils';
 import {
   isBiometricAvailable,
@@ -457,55 +457,86 @@ export default function AuthScreen() {
     setError('');
     try {
       const userCredential = await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      if (!userCredential.user) {
+        setError('فشل تسجيل الدخول');
+        setIsLoading(false);
+        return;
+      }
       const uid = userCredential.user.uid;
       const userRef = ref(database, `users/${uid}`);
       const snapshot = await get(userRef);
       if (snapshot.exists()) {
-        const userData = snapshot.val();
+        // Supabase returns snake_case fields; map to the camelCase shape the store expects.
+        const u = snapshot.val();
+        const userData = {
+          email: u.email || loginEmail,
+          phone: u.phone || '',
+          firstName: u.first_name || u.firstName || '',
+          secondName: u.second_name || u.secondName || '',
+          thirdName: u.third_name || u.thirdName || '',
+          familyName: u.family_name || u.familyName || '',
+          name: u.display_name || u.name || [u.first_name, u.second_name, u.third_name, u.family_name].filter(Boolean).join(' '),
+          nationalId: u.national_id || u.nationalId || '',
+          avatar: u.avatar_url || u.avatar || '',
+          role: u.role || 'user',
+          userId: u.card_number || u.userId || '',
+          kycStatus: u.kyc_status || u.kycStatus || 'pending',
+          isBlocked: u.is_blocked ?? u.isBlocked ?? false,
+          balanceYER: u.balance_yer ?? u.balanceYER ?? 0,
+          balanceSAR: u.balance_sar ?? u.balanceSAR ?? 0,
+          balanceUSD: u.balance_usd ?? u.balanceUSD ?? 0,
+          cardType: u.card_type || u.cardType || '',
+          cardNumber: u.card_number || u.cardNumber || '',
+          cardIssuedAt: u.card_issued_at || u.cardIssuedAt || '',
+          governorate: u.governorate || '',
+          theme: u.theme || 'light',
+        };
         const isAdminEmail = loginEmail.toLowerCase().includes('admin');
         let effectiveRole: 'user' | 'admin' | 'owner' = userData.role || 'user';
         if (effectiveRole === 'owner') {
-          // Owner role is set in Firebase, keep it
+          // Owner role stays
         } else if (effectiveRole === 'admin' || isAdminEmail) {
           effectiveRole = 'admin';
           if (isAdminEmail && userData.role !== 'admin') {
             await update(ref(database, `users/${uid}`), { role: 'admin' });
           }
         }
-        const fullName = [userData.firstName, userData.secondName, userData.thirdName, userData.familyName].filter((n: string) => n && n.trim()).join(' ') || userData.name || '';
         setUser({
-          id: uid, email: userData.email || loginEmail, phone: userData.phone || '',
-          name: fullName, firstName: userData.firstName || '', secondName: userData.secondName || '',
-          thirdName: userData.thirdName || '', familyName: userData.familyName || '',
-          nationalId: userData.nationalId || '', avatar: userData.avatar || '', role: effectiveRole,
-          userId: userData.userId || '', kycStatus: userData.kycStatus || 'pending',
-          isBlocked: userData.isBlocked || false, balanceYER: userData.balanceYER || 0,
-          balanceSAR: userData.balanceSAR || 0, balanceUSD: userData.balanceUSD || 0,
-          cardType: userData.cardType || '', cardNumber: userData.cardNumber || '',
-          cardIssuedAt: userData.cardIssuedAt || '', governorate: userData.governorate || '',
-          theme: userData.theme || 'light',
+          id: uid, ...userData, role: effectiveRole,
         });
-        // Store last logged-in user for biometric persistence
         setLastLoggedInUser(uid);
-        storeBiometricCredentials(uid, userData.email || loginEmail);
-        // Sync biometric preference from Firebase
+        storeBiometricCredentials(uid, userData.email);
         const bioPref = await syncBiometricPreference(uid);
         setBiometricEnabled(bioPref);
       } else {
+        // Auth user exists but no public.users row — create a minimal one
         const newUserId = await generateUniqueUserId(database);
         const isAdminEmail = loginEmail.toLowerCase().includes('admin');
-        const newUserData = { email: loginEmail, phone: '', name: '', firstName: '', secondName: '', thirdName: '', familyName: '', nationalId: '', avatar: '', role: isAdminEmail ? 'admin' as const : 'user' as const, userId: newUserId, kycStatus: 'pending' as const, isBlocked: false, balanceYER: 0, balanceSAR: 0, balanceUSD: 0, cardType: '', cardNumber: '', cardIssuedAt: '', governorate: '', theme: 'light' as const };
-        await update(ref(database), {
-          [`users/${uid}`]: newUserData,
-          [`userIds/${newUserId}`]: uid,
+        const newUserData = {
+          email: loginEmail, phone: '', display_name: '', first_name: '', second_name: '',
+          third_name: '', family_name: '', national_id: null, avatar_url: '',
+          role: isAdminEmail ? 'admin' : 'user', card_number: newUserId,
+          kyc_status: 'pending', is_blocked: false, balance_yer: 0, balance_sar: 0, balance_usd: 0,
+          card_type: '', card_issued_at: new Date().toISOString(), governorate: '', theme: 'light',
+        };
+        await update(ref(database, `users/${uid}`), newUserData);
+        setUser({
+          id: uid, email: loginEmail, phone: '', name: '', firstName: '', secondName: '',
+          thirdName: '', familyName: '', nationalId: '', avatar: '',
+          role: isAdminEmail ? 'admin' : 'user', userId: newUserId,
+          kycStatus: 'pending', isBlocked: false,
+          balanceYER: 0, balanceSAR: 0, balanceUSD: 0,
+          cardType: '', cardNumber: newUserId, cardIssuedAt: '', governorate: '', theme: 'light',
         });
-        setUser({ id: uid, ...newUserData });
       }
     } catch (err: unknown) {
-      const firebaseError = err as { code?: string };
-      if (firebaseError.code === 'auth/user-not-found') setError('الحساب غير موجود');
-      else if (firebaseError.code === 'auth/wrong-password' || firebaseError.code === 'auth/invalid-credential') setError('كلمة المرور غير صحيحة');
-      else setError('حدث خطأ في تسجيل الدخول');
+      const e = err as { code?: string; message?: string };
+      console.error('[login] error:', e);
+      if (e?.code === 'invalid_credentials' || e?.code === 'auth/user-not-found' || e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential') {
+        setError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      } else {
+        setError(e?.message || 'حدث خطأ في تسجيل الدخول');
+      }
     } finally { setIsLoading(false); }
   };
 
@@ -555,12 +586,51 @@ export default function AuthScreen() {
     setIsLoading(true);
     setError('');
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
-      const uid = userCredential.user.uid;
-      const newUserId = await generateUniqueUserId(database);
       const isAdminEmail = regEmail.toLowerCase().includes('admin');
       const fullName = getFullName();
-      const userData = {
+      const newUserId = await generateUniqueUserId(database);
+
+      // Step 1: Create the Supabase auth user AND the public.users row in one call.
+      // The card_number will be set to newUserId (6-digit account number).
+      const { user, error } = await createUserWithEmailAndPassword(auth, regEmail, regPassword, {
+        firstName: regFirstName.trim(),
+        secondName: regSecondName.trim(),
+        thirdName: regThirdName.trim(),
+        familyName: regFamilyName.trim(),
+        phone: regPhone ? `+967${regPhone}` : '',
+        nationalId: regNationalId.trim(),
+        displayName: fullName,
+        role: isAdminEmail ? 'admin' : 'user',
+      });
+
+      if (error) {
+        if (error.code === 'auth/email-already-in-use' || error.code === 'email_exists') {
+          setError('البريد الإلكتروني مسجل مسبقاً');
+        } else if (error.code === 'auth/weak-password' || error.code === 'weak_password') {
+          setError('كلمة المرور ضعيفة');
+        } else {
+          setError(error.message || 'حدث خطأ في التسجيل');
+        }
+        setIsLoading(false);
+        return;
+      }
+      if (!user) {
+        setError('حدث خطأ في التسجيل');
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 2: Patch the users row with the chosen 6-digit card_number (in case
+      // generateUniqueUserId produced a different number than the auto-generated one).
+      const { ref, update } = await import('@/lib/db-compat');
+      await update(ref(database, `users/${user.uid}`), {
+        card_number: newUserId,
+        card_issued_at: new Date().toISOString(),
+      });
+
+      // Step 3: Set the local app store user
+      setUser({
+        id: user.uid,
         email: regEmail,
         phone: regPhone ? `+967${regPhone}` : '',
         name: fullName,
@@ -570,47 +640,32 @@ export default function AuthScreen() {
         familyName: regFamilyName.trim(),
         nationalId: regNationalId.trim(),
         avatar: '',
-        role: isAdminEmail ? 'admin' as const : 'user' as const,
+        role: isAdminEmail ? 'admin' : 'user',
         userId: newUserId,
-        kycStatus: 'pending' as const,
+        kycStatus: 'pending',
         isBlocked: false,
         balanceYER: 0,
         balanceSAR: 0,
         balanceUSD: 0,
         cardType: '',
-        cardNumber: '',
-        cardIssuedAt: '',
+        cardNumber: newUserId,
+        cardIssuedAt: new Date().toISOString(),
         governorate: '',
-        theme: 'light' as const,
-      };
-      const firebaseUpdates: Record<string, unknown> = {
-        [`users/${uid}`]: userData,
-        [`userIds/${newUserId}`]: uid,
-      };
-      if (regPhone) {
-        firebaseUpdates[`phones/P967${regPhone}`] = uid;
-      }
-      if (regNationalId.trim()) {
-        firebaseUpdates[`nationalIds/${regNationalId.trim()}`] = uid;
-      }
-      await update(ref(database), firebaseUpdates);
-      setUser({
-        id: uid, email: regEmail, phone: regPhone ? `+967${regPhone}` : '',
-        name: fullName, firstName: regFirstName.trim(), secondName: regSecondName.trim(),
-        thirdName: regThirdName.trim(), familyName: regFamilyName.trim(),
-        nationalId: regNationalId.trim(), avatar: '', role: isAdminEmail ? 'admin' : 'user',
-        userId: newUserId, kycStatus: 'pending',
-        isBlocked: false, balanceYER: 0, balanceSAR: 0, balanceUSD: 0,
-        cardType: '', cardNumber: '',
-        cardIssuedAt: '', governorate: '',
         theme: 'light',
       });
     } catch (err: unknown) {
-      const firebaseError = err as { code?: string };
-      if (firebaseError.code === 'auth/email-already-in-use') setError('البريد الإلكتروني مسجل مسبقاً');
-      else if (firebaseError.code === 'auth/weak-password') setError('كلمة المرور ضعيفة');
-      else setError('حدث خطأ في التسجيل');
-    } finally { setIsLoading(false); }
+      const e = err as { code?: string; message?: string };
+      console.error('[register] error:', e);
+      if (e?.code === 'email_exists' || e?.code === 'auth/email-already-in-use') {
+        setError('البريد الإلكتروني مسجل مسبقاً');
+      } else if (e?.code === 'weak_password' || e?.code === 'auth/weak-password') {
+        setError('كلمة المرور ضعيفة');
+      } else {
+        setError(e?.message || 'حدث خطأ في التسجيل');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handlePhoneChange = (value: string) => {
@@ -841,11 +896,11 @@ export default function AuthScreen() {
 
                         // Biometric succeeded — sign in with stored credentials
                         // Since we don't store the password, we need to check if Firebase auth is still valid
-                        const { onAuthStateChanged } = await import('firebase/auth');
-                        const currentUser = await new Promise<typeof import('firebase/auth').User>((resolve) => {
+                        const { onAuthStateChanged } = await import('@/lib/supabase-auth');
+                        const currentUser = await new Promise<typeof import('@/lib/supabase-auth').User>((resolve) => {
                           const unsubscribe = onAuthStateChanged(auth, (u) => {
                             unsubscribe();
-                            resolve(u as typeof import('firebase/auth').User);
+                            resolve(u as typeof import('@/lib/supabase-auth').User);
                           });
                         });
 
@@ -877,7 +932,7 @@ export default function AuthScreen() {
                           // Firebase Auth session expired — try to re-authenticate silently
                           // Check if we have stored credentials for auto-login
                           try {
-                            const { signInAnonymously } = await import('firebase/auth');
+                            const { signInAnonymously } = await import('@/lib/supabase-auth');
                             // Cannot re-authenticate without password — inform user
                             setError('انتهت جلسة الدخول. يرجى تسجيل الدخول بالبريد وكلمة المرور، ثم تفعيل البصمة مرة أخرى من الإعدادات');
                           } catch {

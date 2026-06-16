@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { RefreshCw, ArrowLeftRight, Save, CheckCircle2, Eye, Percent, Zap } from 'lucide-react';
 import { useAdminContext } from './admin-context';
 import { currencySymbols, currencyBadgeColors, formatNumber } from '@/lib/utils';
-import { set, ref } from 'firebase/database';
+import { set, ref } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 export default function AdminExchangeRates() {

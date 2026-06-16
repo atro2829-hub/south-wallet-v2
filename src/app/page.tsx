@@ -5,11 +5,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useAppStore } from '@/lib/store';
 import { ToastProvider, useToast } from '@/components/fahed/toast-provider';
 import { useTheme } from 'next-themes';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from '@/lib/supabase-auth';
 import { auth, database } from '@/lib/firebase';
-import { ref, get, update } from 'firebase/database';
+import { ref, get, update } from '@/lib/db-compat';
 import { generateUserId } from '@/lib/utils';
-import { supabaseService } from '@/lib/supabase';
 import { ErrorBoundary } from '@/components/fahed/error-boundary';
 
 // Lazy-loaded screen components for better performance
@@ -198,7 +197,7 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, [user?.kycStatus, isAuthenticated, showToast]);
 
-  // Listen to Firebase Auth state changes and sync with Zustand store
+  // Listen to Supabase Auth state changes and sync with Zustand store
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       // Mark that auth has been initialized at least once
@@ -207,8 +206,7 @@ function AppContent() {
       }
 
       if (firebaseUser) {
-        // User is signed in via Firebase Auth
-        // Check if Zustand store already has this user synced
+        // User is signed in via Supabase Auth
         const currentUser = useAppStore.getState().user;
         if (currentUser && currentUser.id === firebaseUser.uid) {
           // Already synced, just mark auth as loaded
@@ -216,13 +214,17 @@ function AppContent() {
           return;
         }
 
-        // Fetch user data from Firebase and set in store
+        // Fetch user data from Supabase `users` table
         try {
           const userRef = ref(database, `users/${firebaseUser.uid}`);
           const snapshot = await get(userRef);
           if (snapshot.exists()) {
+            // Supabase returns snake_case fields; map them.
             const data = snapshot.val();
-            const fullName = [data.firstName, data.secondName, data.thirdName, data.familyName].filter((n: string) => n && n.trim()).join(' ') || data.name || '';
+            const fullName =
+              [data.first_name, data.second_name, data.third_name, data.family_name]
+                .filter((n: string) => n && n.trim()).join(' ') ||
+              data.display_name || data.name || '';
             const isAdminEmail = (data.email || firebaseUser.email || '').toLowerCase().includes('admin');
             let effectiveRole: 'user' | 'admin' | 'owner' = data.role || 'user';
             if (effectiveRole !== 'owner' && (effectiveRole === 'admin' || isAdminEmail)) {
@@ -233,72 +235,69 @@ function AppContent() {
               email: data.email || firebaseUser.email || '',
               phone: data.phone || '',
               name: fullName,
-              firstName: data.firstName || '',
-              secondName: data.secondName || '',
-              thirdName: data.thirdName || '',
-              familyName: data.familyName || '',
-              nationalId: data.nationalId || '',
-              avatar: data.avatar || '',
+              firstName: data.first_name || '',
+              secondName: data.second_name || '',
+              thirdName: data.third_name || '',
+              familyName: data.family_name || '',
+              nationalId: data.national_id || '',
+              avatar: data.avatar_url || '',
               role: effectiveRole,
-              userId: data.userId || '',
-              kycStatus: data.kycStatus || 'pending',
-              isBlocked: data.isBlocked || false,
-              balanceYER: data.balanceYER || 0,
-              balanceSAR: data.balanceSAR || 0,
-              balanceUSD: data.balanceUSD || 0,
-              cardType: data.cardType || '',
-              cardNumber: data.cardNumber || '',
-              cardIssuedAt: data.cardIssuedAt || '',
+              userId: data.card_number || '',
+              kycStatus: data.kyc_status || 'pending',
+              isBlocked: data.is_blocked || false,
+              balanceYER: data.balance_yer || 0,
+              balanceSAR: data.balance_sar || 0,
+              balanceUSD: data.balance_usd || 0,
+              cardType: data.card_type || '',
+              cardNumber: data.card_number || '',
+              cardIssuedAt: data.card_issued_at || '',
               governorate: data.governorate || '',
               theme: data.theme || 'light',
             });
-
-            // Sync user to Supabase so chat/search features can find them
-            supabaseService.ensureUser(firebaseUser.uid, {
-              email: data.email || firebaseUser.email || '',
-              phone: data.phone || '',
-              displayName: fullName,
-              firstName: data.firstName || '',
-              secondName: data.secondName || '',
-              thirdName: data.thirdName || '',
-              familyName: data.familyName || '',
-              avatar: data.avatar || '',
-              role: effectiveRole,
-              userId: data.userId || '',
-            });
           } else {
-            // Firebase auth user exists but no DB record - create one
+            // Auth user exists but no public.users row — create a minimal one.
+            // (This is rare since signUp already creates the row, but we handle it
+            // for safety / for users created before the migration.)
             const newUserId = generateUserId();
             const email = firebaseUser.email || '';
             const isAdminEmail = email.toLowerCase().includes('admin');
             const newUserData = {
-              email, phone: '', name: '', firstName: '', secondName: '', thirdName: '', familyName: '',
-              nationalId: '', avatar: '', role: isAdminEmail ? 'admin' as const : 'user' as const, userId: newUserId,
-              kycStatus: 'pending' as const, isBlocked: false, balanceYER: 0, balanceSAR: 0, balanceUSD: 0,
-              cardType: '', cardNumber: '', cardIssuedAt: '', governorate: '', theme: 'light' as const,
-            };
-            await update(ref(database), {
-              [`users/${firebaseUser.uid}`]: newUserData,
-              [`userIds/${newUserId}`]: firebaseUser.uid,
-            });
-            useAppStore.getState().setUser({ id: firebaseUser.uid, ...newUserData });
-
-            // Sync new user to Supabase
-            supabaseService.ensureUser(firebaseUser.uid, {
               email,
-              displayName: '',
-              role: newUserData.role,
+              phone: '',
+              display_name: '',
+              first_name: '', second_name: '', third_name: '', family_name: '',
+              national_id: null,
+              avatar_url: '',
+              role: isAdminEmail ? 'admin' : 'user',
+              card_number: newUserId,
+              card_issued_at: new Date().toISOString(),
+              kyc_status: 'pending',
+              is_blocked: false,
+              balance_yer: 0, balance_sar: 0, balance_usd: 0,
+              card_type: '',
+              governorate: '',
+              theme: 'light',
+            };
+            await update(ref(database, `users/${firebaseUser.uid}`), newUserData);
+            useAppStore.getState().setUser({
+              id: firebaseUser.uid,
+              email, phone: '', name: '',
+              firstName: '', secondName: '', thirdName: '', familyName: '',
+              nationalId: '', avatar: '',
+              role: isAdminEmail ? 'admin' : 'user',
               userId: newUserId,
+              kycStatus: 'pending',
+              isBlocked: false,
+              balanceYER: 0, balanceSAR: 0, balanceUSD: 0,
+              cardType: '', cardNumber: newUserId, cardIssuedAt: '',
+              governorate: '', theme: 'light',
             });
           }
         } catch (error) {
           console.error('Error fetching user data on auth state change:', error);
-          // Don't logout on fetch error - the user might just have a network issue
         }
       } else {
-        // User is signed out from Firebase Auth
-        // Only clear store if auth was already initialized (not during initial load)
-        // This prevents premature logout when Firebase Auth is still initializing
+        // User is signed out
         const currentState = useAppStore.getState();
         if (currentState.isAuthenticated || currentState.user) {
           useAppStore.getState().logout();
@@ -358,7 +357,7 @@ function AppContent() {
             // Save FCM token to Firebase
             try {
               const { database } = await import('@/lib/firebase');
-              const { ref, set: firebaseSet } = await import('firebase/database');
+              const { ref, set: firebaseSet } = await import('@/lib/db-compat');
               const currentUser = useAppStore.getState().user;
               if (currentUser?.id) {
                 await firebaseSet(ref(database, `users/${currentUser.id}/fcmToken`), token.value);
@@ -438,7 +437,7 @@ function AppContent() {
                 const currentUser = useAppStore.getState().user;
                 if (currentUser?.id) {
                   const { database } = await import('@/lib/firebase');
-                  const { ref, set: firebaseSet } = await import('firebase/database');
+                  const { ref, set: firebaseSet } = await import('@/lib/db-compat');
                   await firebaseSet(ref(database, `users/${currentUser.id}/fcmToken`), currentToken);
                   console.log('Web FCM token saved for user:', currentUser.id);
                 }

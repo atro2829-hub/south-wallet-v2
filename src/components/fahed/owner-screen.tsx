@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type Order, type ServiceProvider, type ProductPackage } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, formatNumber, generateReference, compressBase64Image, timeAgo } from '@/lib/utils';
-import { ref, set, get, update, remove, push, onValue } from 'firebase/database';
+import { ref, set, get, update, remove, push, onValue } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 import { supabaseService } from '@/lib/supabase';
 import { getAllCategories, deleteCategory, toggleCategory, saveCategory, getAllSubSections, deleteSubSection, toggleSubSection, saveSubSection, type DynamicCategory, type DynamicSubSection } from '@/lib/categories';

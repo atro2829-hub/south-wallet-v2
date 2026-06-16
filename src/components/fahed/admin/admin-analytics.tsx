@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useAdminContext } from './admin-context';
 import { formatNumber, currencySymbols } from '@/lib/utils';
-import { ref, get } from 'firebase/database';
+import { ref, get } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
 
 export default function AdminAnalytics() {
