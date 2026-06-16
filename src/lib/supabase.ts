@@ -520,19 +520,33 @@ export const supabaseService = {
    * Ensure a user exists in Supabase. If they don't, create them.
    * If they do, update their info. This keeps Firebase and Supabase in sync.
    * Called on every auth state change so that chat/search features can find users.
+   *
+   * IMPORTANT:
+   * - `userId` (the 6-digit account number from Firebase) is mapped to `card_number`.
+   * - If no `userId` is provided AND the user doesn't yet exist, we generate a 6-digit
+   *   one (rare path; the registration flow normally passes `userId`).
+   * - `national_id` is left NULL when not provided, so the partial unique index
+   *   `users_national_id_unique_idx` (WHERE national_id IS NOT NULL AND <> '') does
+   *   not block the insert.
+   * - All errors are logged with full detail (no silent swallowing).
    */
   async ensureUser(firebaseUid: string, data: {
     email?: string; phone?: string; displayName?: string;
     firstName?: string; secondName?: string; thirdName?: string; familyName?: string;
-    avatar?: string; role?: string; userId?: string;
+    avatar?: string; role?: string; userId?: string; nationalId?: string;
   }) {
     try {
       const existing = await supabaseService.getUserByFirebaseUid(firebaseUid);
 
+      // Map the Firebase `userId` (6-digit account number) → Supabase `card_number`.
+      // Use NULL when not provided so partial unique indexes don't collide.
+      const cardNumber = data.userId && data.userId.trim() !== '' ? data.userId.trim() : null;
+      const nationalId = data.nationalId && data.nationalId.trim() !== '' ? data.nationalId.trim() : null;
+
       const userData: Record<string, unknown> = {
         firebase_uid: firebaseUid,
-        email: data.email || null,
-        phone: data.phone || null,
+        email: data.email && data.email.trim() !== '' ? data.email.trim() : null,
+        phone: data.phone && data.phone.trim() !== '' ? data.phone.trim() : null,
         display_name: data.displayName || '',
         first_name: data.firstName || '',
         second_name: data.secondName || '',
@@ -540,27 +554,69 @@ export const supabaseService = {
         family_name: data.familyName || '',
         avatar_url: data.avatar || '',
         role: data.role || 'user',
+        national_id: nationalId,
         is_active: true,
         is_blocked: false,
         updated_at: new Date().toISOString(),
       };
 
       if (existing) {
-        // Update existing user
-        await supabase
+        // Update existing user. Only set card_number if a real value was provided
+        // AND the existing row doesn't already have one (don't overwrite a real number).
+        if (cardNumber && !existing.card_number) {
+          userData.card_number = cardNumber;
+        }
+        const { error } = await supabase
           .from('users')
           .update(userData)
           .eq('id', existing.id);
+        if (error) {
+          console.error('[ensureUser] update failed:', error.code, error.message, JSON.stringify(userData));
+        }
       } else {
-        // Create new user
+        // Create new user. Generate a 6-digit card_number if none was provided.
+        let finalCardNumber = cardNumber;
+        if (!finalCardNumber) {
+          finalCardNumber = await supabaseService.generateUniqueCardNumber();
+        }
+
         userData.id = crypto.randomUUID();
+        userData.card_number = finalCardNumber;
+        userData.card_issued_at = new Date().toISOString();
         userData.kyc_status = 'pending';
         userData.created_at = new Date().toISOString();
-        await supabase.from('users').insert(userData);
+
+        const { error } = await supabase.from('users').insert(userData);
+        if (error) {
+          console.error('[ensureUser] insert failed:', error.code, error.message, JSON.stringify(userData));
+        }
       }
     } catch (err) {
-      console.error('Error ensuring user in Supabase:', err);
+      console.error('[ensureUser] unexpected error:', err);
     }
+  },
+
+  /**
+   * Generate a unique 6-digit card_number not yet present in the users table.
+   * Tries prefixes 10..99 in order (same scheme as `generateUniqueUserId` in utils.ts).
+   */
+  async generateUniqueCardNumber(maxAttempts = 100): Promise<string> {
+    for (let i = 0; i < maxAttempts; i++) {
+      const prefix = 10 + Math.floor(i / 5);
+      if (prefix > 99) break;
+      const random4 = Math.floor(1000 + Math.random() * 9000).toString();
+      const candidate = String(prefix) + random4;
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .eq('card_number', candidate)
+        .maybeSingle();
+      if (!error && !data) {
+        return candidate;
+      }
+    }
+    // Fallback: pure random 6-digit
+    return Math.floor(100000 + Math.random() * 900000).toString();
   },
 
   // --- Transactions ---
