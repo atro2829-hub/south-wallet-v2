@@ -5,7 +5,10 @@
 import { supabase } from './supabase';
 
 // ===== Constants =====
-export const G2BULK_API_KEY = process.env.NEXT_PUBLIC_G2BULK_API_KEY || '';
+// G2Bulk API key. Static-export Capacitor app has no runtime env, so we hardcode the fallback.
+// The key is also stored in the Supabase `api_providers` table (row id='g2bulk') for runtime override.
+export const G2BULK_API_KEY = process.env.NEXT_PUBLIC_G2BULK_API_KEY
+  || '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45';
 export const G2BULK_BASE_URL = 'https://api.g2bulk.com';
 
 // ===== Types =====

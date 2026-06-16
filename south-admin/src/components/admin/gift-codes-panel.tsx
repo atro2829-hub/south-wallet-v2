@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ref, onValue, push, update, remove } from 'firebase/database';
 import { database } from '@/lib/firebase';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateGiftCode } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -46,38 +47,86 @@ export default function GiftCodesPanel() {
   const handleCreate = async () => {
     if (!amount) return;
     try {
+      // Look up admin's Supabase UUID from their Firebase UID
+      let adminUuid = 'ad7cb1d3-ab79-4e9e-b76f-314c38a3e0c2'; // fallback to owner UUID
+      if (adminUser?.uid) {
+        try {
+          const { data } = await supabaseAdmin
+            .from('users')
+            .select('id')
+            .eq('firebase_uid', adminUser.uid)
+            .maybeSingle();
+          if (data?.id) adminUuid = data.id;
+        } catch (e) { /* use fallback */ }
+      }
+
+      const codeList: { code: string; payload: any }[] = [];
       if (bulkMode) {
         const count = parseInt(bulkCount) || 1;
         for (let i = 0; i < count; i++) {
-          await push(ref(database, 'giftCodes'), {
-            code: generateGiftCode(),
-            amount: parseFloat(amount),
-            currency,
-            maxUses: parseInt(maxUses) || 1,
-            usedCount: 0,
-            expiresAt: expiresAt || '',
-            isActive,
-            visibleToUsers,
-            createdBy: 'admin',
-            createdAt: new Date().toISOString(),
+          const c = generateGiftCode();
+          codeList.push({
+            code: c,
+            payload: {
+              code: c,
+              amount: parseFloat(amount),
+              currency,
+              max_uses: parseInt(maxUses) || 1,
+              used_count: 0,
+              expires_at: expiresAt || null,
+              is_active: isActive,
+              visible_to_users: visibleToUsers,
+              status: isActive ? 'active' : 'cancelled',
+              created_by: adminUuid,
+              created_at: new Date().toISOString(),
+            },
           });
         }
         showToast(`تم إنشاء ${count} كود هدية`, 'success');
       } else {
-        await push(ref(database, 'giftCodes'), {
-          code: code || generateGiftCode(),
-          amount: parseFloat(amount),
-          currency,
-          maxUses: parseInt(maxUses) || 1,
-          usedCount: 0,
-          expiresAt: expiresAt || '',
-          isActive,
-          visibleToUsers,
-          createdBy: 'admin',
-          createdAt: new Date().toISOString(),
+        const c = code || generateGiftCode();
+        codeList.push({
+          code: c,
+          payload: {
+            code: c,
+            amount: parseFloat(amount),
+            currency,
+            max_uses: parseInt(maxUses) || 1,
+            used_count: 0,
+            expires_at: expiresAt || null,
+            is_active: isActive,
+            visible_to_users: visibleToUsers,
+            status: isActive ? 'active' : 'cancelled',
+            created_by: adminUuid,
+            created_at: new Date().toISOString(),
+          },
         });
         showToast('تم إنشاء كود الهدية', 'success');
       }
+
+      // 1) Insert into Firebase (legacy/realtime)
+      for (const { code: c, payload } of codeList) {
+        await push(ref(database, 'giftCodes'), {
+          code: c,
+          amount: payload.amount,
+          currency: payload.currency,
+          maxUses: payload.max_uses,
+          usedCount: 0,
+          expiresAt: payload.expires_at || '',
+          isActive: payload.is_active,
+          visibleToUsers: payload.visible_to_users,
+          createdBy: 'admin',
+          createdAt: payload.created_at,
+        });
+      }
+
+      // 2) Insert into Supabase (PRIMARY source — user app reads from here)
+      try {
+        await supabaseAdmin.from('gift_codes').insert(codeList.map((c) => c.payload));
+      } catch (supaErr) {
+        console.warn('Supabase gift_codes insert failed (non-fatal):', supaErr);
+      }
+
       setDialog(false);
       setCode(''); setAmount(''); setMaxUses('1'); setExpiresAt(''); setIsActive(true); setVisibleToUsers(false);
     } catch (e) { showToast('حدث خطأ', 'error'); }
@@ -86,6 +135,10 @@ export default function GiftCodesPanel() {
   const handleToggle = async (c: any) => {
     try {
       await update(ref(database, `giftCodes/${c.id}`), { isActive: !c.isActive });
+      // Mirror to Supabase by code (Firebase id is not the same as Supabase id)
+      try {
+        await supabaseAdmin.from('gift_codes').update({ is_active: !c.isActive, updated_at: new Date().toISOString() }).eq('code', c.code);
+      } catch (e) { /* non-fatal */ }
       showToast(c.isActive ? 'تم تعطيل الكود' : 'تم تفعيل الكود', 'success');
     } catch (e) { showToast('حدث خطأ', 'error'); }
   };
@@ -93,13 +146,22 @@ export default function GiftCodesPanel() {
   const handleToggleVisibility = async (c: any) => {
     try {
       await update(ref(database, `giftCodes/${c.id}`), { visibleToUsers: !c.visibleToUsers });
+      try {
+        await supabaseAdmin.from('gift_codes').update({ visible_to_users: !c.visibleToUsers, updated_at: new Date().toISOString() }).eq('code', c.code);
+      } catch (e) { /* non-fatal */ }
       showToast(c.visibleToUsers ? 'تم إخفاء الكود من المستخدمين' : 'تم إظهار الكود للمستخدمين', 'success');
     } catch (e) { showToast('حدث خطأ', 'error'); }
   };
 
   const handleDelete = async (id: string) => {
     try {
+      const c = codes.find((x) => x.id === id);
       await remove(ref(database, `giftCodes/${id}`));
+      if (c?.code) {
+        try {
+          await supabaseAdmin.from('gift_codes').delete().eq('code', c.code);
+        } catch (e) { /* non-fatal */ }
+      }
       showToast('تم حذف الكود', 'success');
     } catch (e) { showToast('حدث خطأ', 'error'); }
   };

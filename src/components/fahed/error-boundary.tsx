@@ -6,6 +6,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
+  onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 }
 
 interface ErrorBoundaryState {
@@ -25,6 +26,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('App Error Boundary caught an error:', error, errorInfo);
+    if (this.props.onError) {
+      try {
+        this.props.onError(error, errorInfo);
+      } catch (e) {
+        // ignore callback errors
+      }
+    }
   }
 
   handleReset = () => {

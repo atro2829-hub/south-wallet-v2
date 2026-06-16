@@ -1,13 +1,13 @@
-import { PrismaClient } from '@prisma/client'
+/**
+ * Database client stub.
+ *
+ * South Wallet v2 uses Supabase as the single source of truth (@/lib/supabase).
+ * Prisma is NOT used anywhere in this project (no schema, no imports of @/lib/db).
+ * This file is kept only to satisfy any stray imports during build; it does nothing.
+ *
+ * If you need to read or write data, use:
+ *   import { supabase, supabaseAdmin, supabaseService } from '@/lib/supabase';
+ */
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
-}
-
-export const db =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: ['query'],
-  })
-
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
+export const db = null;
+export default db;

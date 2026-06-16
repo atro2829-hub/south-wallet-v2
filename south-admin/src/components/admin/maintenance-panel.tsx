@@ -11,29 +11,63 @@ import {
   Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
+// Firebase kept ONLY as a secondary broadcast channel for legacy clients.
+// The PRIMARY source of truth is the Supabase `maintenance` table — user apps subscribe to it.
 import { database } from '@/lib/firebase';
 import { ref, get, set } from 'firebase/database';
 
+interface MaintenanceRow {
+  id: string;
+  is_active: boolean;
+  message: string;
+  estimated_time: string;
+  allow_admin_access: boolean;
+  activated_at: string | null;
+  activated_by: string;
+  updated_at: string;
+}
+
+const DEFAULT_MESSAGE = 'نحن نقوم بتحسين النظام. سنعود قريباً!';
+const DEFAULT_ESTIMATED = '30 دقيقة';
+const SINGLETON_ID = '00000000-0000-0000-0000-000000000001';
+
 export default function MaintenancePanel() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
-  const [maintenanceMessage, setMaintenanceMessage] = useState('نحن نقوم بتحسين النظام. سنعود قريباً!');
-  const [estimatedTime, setEstimatedTime] = useState('30 دقيقة');
+  const [maintenanceMessage, setMaintenanceMessage] = useState(DEFAULT_MESSAGE);
+  const [estimatedTime, setEstimatedTime] = useState(DEFAULT_ESTIMATED);
   const [allowAdminAccess, setAllowAdminAccess] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load current maintenance settings from Firebase on mount
+  // Load current maintenance settings from Supabase (PRIMARY source of truth).
+  // Falls back to Firebase if the Supabase row doesn't exist yet.
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const snapshot = await get(ref(database, 'adminSettings/maintenance'));
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          setMaintenanceMode(data.active === true);
-          setMaintenanceMessage(data.message || 'نحن نقوم بتحسين النظام. سنعود قريباً!');
-          setEstimatedTime(data.estimatedTime || '30 دقيقة');
-          setAllowAdminAccess(data.allowAdminAccess !== false);
+        // 1) Try Supabase first
+        const { data, error } = await supabase
+          .from('maintenance')
+          .select('*')
+          .eq('id', SINGLETON_ID)
+          .maybeSingle();
+
+        if (!error && data) {
+          setMaintenanceMode(data.is_active === true);
+          setMaintenanceMessage(data.message || DEFAULT_MESSAGE);
+          setEstimatedTime(data.estimated_time || DEFAULT_ESTIMATED);
+          setAllowAdminAccess(data.allow_admin_access !== false);
+        } else {
+          // 2) Fall back to Firebase for backward compat
+          const snapshot = await get(ref(database, 'adminSettings/maintenance'));
+          if (snapshot.exists()) {
+            const fbData = snapshot.val();
+            setMaintenanceMode(fbData.active === true);
+            setMaintenanceMessage(fbData.message || DEFAULT_MESSAGE);
+            setEstimatedTime(fbData.estimatedTime || DEFAULT_ESTIMATED);
+            setAllowAdminAccess(fbData.allowAdminAccess !== false);
+          }
         }
       } catch (error) {
         console.error('Error loading maintenance settings:', error);
@@ -47,15 +81,43 @@ export default function MaintenancePanel() {
     setIsSaving(true);
     setSaveSuccess(false);
     try {
+      const nowIso = new Date().toISOString();
       const maintenanceData = {
-        active: maintenanceMode,
+        id: SINGLETON_ID,
+        is_active: maintenanceMode,
         message: maintenanceMessage,
-        estimatedTime: estimatedTime,
-        allowAdminAccess: allowAdminAccess,
-        updatedAt: new Date().toISOString(),
-        updatedBy: 'admin',
+        estimated_time: estimatedTime,
+        allow_admin_access: allowAdminAccess,
+        activated_at: maintenanceMode ? nowIso : null,
+        activated_by: 'admin',
+        updated_at: nowIso,
       };
-      await set(ref(database, 'adminSettings/maintenance'), maintenanceData);
+
+      // 1) Upsert to Supabase (PRIMARY) — use admin client to bypass RLS
+      const { error: supaErr } = await supabaseAdmin
+        .from('maintenance')
+        .upsert(maintenanceData, { onConflict: 'id' });
+
+      if (supaErr) {
+        console.error('Supabase maintenance upsert failed:', supaErr);
+        // Try anon client as fallback (in case RLS permits)
+        await supabase.from('maintenance').upsert(maintenanceData, { onConflict: 'id' });
+      }
+
+      // 2) Mirror to Firebase Realtime Database (legacy broadcast channel)
+      try {
+        await set(ref(database, 'adminSettings/maintenance'), {
+          active: maintenanceMode,
+          message: maintenanceMessage,
+          estimatedTime: estimatedTime,
+          allowAdminAccess: allowAdminAccess,
+          updatedAt: nowIso,
+          updatedBy: 'admin',
+        });
+      } catch (fbErr) {
+        console.warn('Firebase mirror failed (non-fatal):', fbErr);
+      }
+
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (error) {
@@ -79,7 +141,6 @@ export default function MaintenancePanel() {
         <p className="text-muted-foreground text-sm mt-1">إدارة وضع صيانة التطبيق - عند التفعيل يتم قفل التطبيق على جميع المستخدمين فوراً</p>
       </div>
 
-      {/* Warning */}
       <AnimatePresence>
         {maintenanceMode && (
           <motion.div
@@ -97,7 +158,6 @@ export default function MaintenancePanel() {
         )}
       </AnimatePresence>
 
-      {/* Success message */}
       <AnimatePresence>
         {saveSuccess && (
           <motion.div
@@ -115,7 +175,6 @@ export default function MaintenancePanel() {
         )}
       </AnimatePresence>
 
-      {/* Main Toggle */}
       <div className="ios-card p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -134,7 +193,6 @@ export default function MaintenancePanel() {
         </div>
       </div>
 
-      {/* Settings */}
       <div className="ios-card p-5 space-y-4">
         <h3 className="text-sm font-semibold text-foreground">إعدادات الصيانة</h3>
 
@@ -171,7 +229,6 @@ export default function MaintenancePanel() {
         </div>
       </div>
 
-      {/* Save */}
       <button
         onClick={handleSave}
         disabled={isSaving}

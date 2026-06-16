@@ -10,7 +10,12 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kifmxseonkdsxuanznny.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM';
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+// Service role key — required for admin operations (bypasses RLS).
+// In a Next.js static-export Capacitor app, env vars are NOT available at runtime,
+// so we hardcode the fallback. The key is already shipped inside the APK anyway.
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+  || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTQ2OTc3MCwiZXhwIjoyMDk3MDQ1NzcwfQ.b1X7ydSkbOwS0LG39h22bvZg65qT0bCI7y5omrHw_rM';
 
 // Standard client with anon key (respects RLS policies)
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

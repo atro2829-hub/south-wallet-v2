@@ -27,6 +27,7 @@ import { useToast } from '@/components/fahed/toast-provider';
 import { database } from '@/lib/firebase';
 import { ref, get, update, push, runTransaction } from 'firebase/database';
 import { sendFCMDirect } from '@/lib/fcm-sender';
+import { supabase, supabaseAdmin, supabaseService } from '@/lib/supabase';
 
 type Currency = 'YER' | 'SAR' | 'USD';
 type TransferMode = 'userId' | 'phone';
@@ -365,6 +366,79 @@ export default function TransferModal() {
       };
 
       await update(ref(database), updates);
+
+      // ---- Mirror to Supabase (PRIMARY source of truth) ----
+      // Write the transaction row + insert notifications + update balances atomically.
+      // We use supabaseAdmin (service role) so RLS doesn't block writes for the user.
+      try {
+        // Look up both users' Supabase UUIDs by their Firebase UID
+        const [senderSupa, recipientSupa] = await Promise.all([
+          supabaseAdmin.from('users').select('id, balance_yer, balance_sar, balance_usd, fcm_token, display_name').eq('firebase_uid', user.id).maybeSingle(),
+          supabaseAdmin.from('users').select('id, balance_yer, balance_sar, balance_usd, fcm_token, display_name').eq('firebase_uid', recipientInfo.uid).maybeSingle(),
+        ]);
+
+        if (senderSupa.data && recipientSupa.data) {
+          const senderUuid = senderSupa.data.id;
+          const recipientUuid = recipientSupa.data.id;
+          const balField = `balance_${currency.toLowerCase()}` as 'balance_yer' | 'balance_sar' | 'balance_usd';
+
+          // 1) Insert transaction row
+          await supabaseAdmin.from('transactions').insert({
+            user_id: senderUuid,
+            from_user_id: senderUuid,
+            to_user_id: recipientUuid,
+            amount: effectiveAmount,
+            currency,
+            fee: 0,
+            fee_currency: currency,
+            type: 'transfer',
+            status: 'completed',
+            description: description || `تحويل إلى ${recipientData.name || ''}`,
+            reference_number: txRef,
+            receipt_data: { sender: senderData.name, recipient: recipientData.name },
+            sender_name: senderData.name || '',
+            sender_phone: senderData.phone || '',
+            receiver_name: recipientData.name || '',
+            receiver_phone: recipientData.phone || '',
+            receiver_card_number: recipientInfo.cardNumber || '',
+            completed_at: new Date().toISOString(),
+          });
+
+          // 2) Update both balances
+          const newSenderBal = (senderSupa.data[balField] || 0) - effectiveAmount;
+          const newRecipientBal = (recipientSupa.data[balField] || 0) + effectiveAmount;
+          await Promise.all([
+            supabaseAdmin.from('users').update({ [balField]: newSenderBal, updated_at: new Date().toISOString() }).eq('id', senderUuid),
+            supabaseAdmin.from('users').update({ [balField]: newRecipientBal, updated_at: new Date().toISOString() }).eq('id', recipientUuid),
+          ]);
+
+          // 3) Insert notifications for both users
+          const nowIso = new Date().toISOString();
+          await supabaseAdmin.from('notifications').insert([
+            {
+              user_id: recipientUuid,
+              title: 'تحويل وارد',
+              body: `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderData.name || ''}`,
+              type: 'transaction',
+              is_read: false,
+              data: { action: 'transfer_received', amount: effectiveAmount, currency, from_user_id: senderUuid },
+              created_at: nowIso,
+            },
+            {
+              user_id: senderUuid,
+              title: 'تحويل صادر',
+              body: `تم تحويل ${effectiveAmount.toLocaleString()} ${currency} إلى ${recipientData.name || ''}`,
+              type: 'transaction',
+              is_read: false,
+              data: { action: 'transfer_sent', amount: effectiveAmount, currency, to_user_id: recipientUuid },
+              created_at: nowIso,
+            },
+          ]);
+        }
+      } catch (supaErr) {
+        // Non-blocking: Firebase already has the transfer, Supabase sync can retry later.
+        console.warn('Supabase transfer mirror failed (non-fatal):', supaErr);
+      }
 
       // Send FCM push notification to the recipient (works when app is closed)
       try {

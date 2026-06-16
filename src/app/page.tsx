@@ -704,9 +704,14 @@ function AppContent() {
     const OverlayComponent = overlayScreens[activeScreen];
     return (
       <div className="min-h-screen bg-[#F5F5F5] dark:bg-[#120808] max-w-md mx-auto relative" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
-        <Suspense fallback={<LoadingSpinner />}>
-          <OverlayComponent key={activeScreen === 'category-detail' ? `category-detail-${selectedCategory}` : activeScreen} />
-        </Suspense>
+        <ErrorBoundary
+          key={activeScreen}
+          onError={(err) => console.error(`Screen ${activeScreen} crashed:`, err)}
+        >
+          <Suspense fallback={<LoadingSpinner />}>
+            <OverlayComponent key={activeScreen === 'category-detail' ? `category-detail-${selectedCategory}` : activeScreen} />
+          </Suspense>
+        </ErrorBoundary>
         <OrderBottomSheet />
         <TransferModal />
         <RequestMoneyModal />
