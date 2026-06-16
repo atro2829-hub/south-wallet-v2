@@ -64,7 +64,7 @@ jobs:
           sdkmanager --install "platform-tools" || true
 
       - name: Install npm dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
       - name: Remove ALL API routes (incompatible with static export)
         run: rm -rf src/app/api || true
@@ -151,7 +151,7 @@ jobs:
 
       - name: Install npm dependencies
         working-directory: south-admin
-        run: npm ci --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
       - name: Build Next.js static export
         working-directory: south-admin
