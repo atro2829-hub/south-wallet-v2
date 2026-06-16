@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#E60000</color>
+    <color name="colorPrimaryDark">#8B0000</color>
+    <color name="colorAccent">#C9A84C</color>
+    <color name="ic_notification_color">#E60000</color>
+</resources>

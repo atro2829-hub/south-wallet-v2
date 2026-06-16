@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">محفظة الجنوب</string>
+    <string name="title_activity_main">محفظة الجنوب</string>
+    <string name="package_name">com.qtbm.south</string>
+    <string name="custom_url_scheme">com.qtbm.south</string>
+</resources>

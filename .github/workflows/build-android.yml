@@ -1,0 +1,189 @@
+name: Build Android Apps
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.gitignore'
+      - 'README.md'
+      - 'docs/'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Which apps to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - user
+          - admin
+
+env:
+  JAVA_VERSION: '21'
+  ANDROID_COMPILE_SDK: '36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  #  USER WALLET (com.qtbm.south)
+  # ──────────────────────────────────────────────────────────────
+  build-user-app:
+    name: "📱 Build User Wallet (com.qtbm.south)"
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_type == 'all' || github.event.inputs.build_type == 'user' || github.event_name != 'workflow_dispatch' }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Node.js 22
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          node --version
+          npm --version
+          node --version | grep -q v22 || { echo "ERROR: Node 22 required but got $(node --version)"; exit 1; }
+
+      - name: Setup JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses 2>/dev/null || true
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-${{ env.ANDROID_COMPILE_SDK }}" "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" || true
+          sdkmanager --install "platform-tools" || true
+
+      - name: Install npm dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Remove ALL API routes (incompatible with static export)
+        run: rm -rf src/app/api || true
+
+      - name: Build Next.js static export
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          NEXT_TELEMETRY_DISABLED: 1
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_G2BULK_API_KEY: ${{ secrets.NEXT_PUBLIC_G2BULK_API_KEY }}
+          NEXT_PUBLIC_G2BULK_BASE_URL: ${{ secrets.NEXT_PUBLIC_G2BULK_BASE_URL }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: ${{ secrets.NEXT_PUBLIC_FIREBASE_DATABASE_URL }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      - name: Create keystore from secret
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > south-wallet.keystore
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Build Release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -PMYAPP_UPLOAD_STORE_FILE=../../south-wallet.keystore \
+            -PMYAPP_UPLOAD_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} \
+            -PMYAPP_UPLOAD_KEY_ALIAS=${{ secrets.KEY_ALIAS }} \
+            -PMYAPP_UPLOAD_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }} \
+            --stacktrace
+
+      - name: Upload User Wallet Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: south-wallet-user-release
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────
+  #  ADMIN APP (com.qtbm.south.admin)
+  # ──────────────────────────────────────────────────────────────
+  build-admin-app:
+    name: "🛡️ Build Admin App (com.qtbm.south.admin)"
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_type == 'all' || github.event.inputs.build_type == 'admin' || github.event_name != 'workflow_dispatch' }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Node.js 22
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          node --version
+          npm --version
+          node --version | grep -q v22 || { echo "ERROR: Node 22 required but got $(node --version)"; exit 1; }
+
+      - name: Setup JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses 2>/dev/null || true
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-${{ env.ANDROID_COMPILE_SDK }}" "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" || true
+          sdkmanager --install "platform-tools" || true
+
+      - name: Install npm dependencies
+        working-directory: south-admin
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Next.js static export
+        working-directory: south-admin
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          NEXT_TELEMETRY_DISABLED: 1
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Create keystore from secret
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > south-wallet.keystore
+
+      - name: Sync Capacitor Android
+        working-directory: south-admin
+        run: npx cap sync android
+
+      - name: Build Release APK
+        working-directory: south-admin/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -PMYAPP_UPLOAD_STORE_FILE=../../../south-wallet.keystore \
+            -PMYAPP_UPLOAD_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} \
+            -PMYAPP_UPLOAD_KEY_ALIAS=${{ secrets.KEY_ALIAS }} \
+            -PMYAPP_UPLOAD_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }} \
+            --stacktrace
+
+      - name: Upload Admin App Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: south-wallet-admin-release
+          path: south-admin/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30

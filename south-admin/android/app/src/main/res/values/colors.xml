@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#6C3CE1</color>
+    <color name="colorPrimaryDark">#1A0A2E</color>
+    <color name="colorAccent">#8B5CF6</color>
+    <color name="splash_bg">#1A0A2E</color>
+    <color name="ic_notification_color">#6C3CE1</color>
+</resources>

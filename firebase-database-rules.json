@@ -1,0 +1,503 @@
+{
+  "rules": {
+    "users": {
+      ".indexOn": ["email", "phone", "userId", "role", "kycStatus", "nationalId"],
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        "balanceYER": {
+          ".write": "auth != null && (auth.uid == $uid) == false",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "balanceSAR": {
+          ".write": "auth != null && (auth.uid == $uid) == false",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "balanceUSD": {
+          ".write": "auth != null && (auth.uid == $uid) == false",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "role": {
+          ".write": "auth != null && (auth.uid == $uid) == false",
+          ".validate": "newData.isString() && (newData.val() == 'user' || newData.val() == 'admin' || newData.val() == 'owner')"
+        },
+        "kycStatus": {
+          ".write": "auth != null && (auth.uid == $uid) == false",
+          ".validate": "newData.isString() && (newData.val() == 'pending' || newData.val() == 'submitted' || newData.val() == 'verified' || newData.val() == 'rejected')"
+        },
+        "isBlocked": {
+          ".write": "auth != null && (auth.uid == $uid) == false",
+          ".validate": "newData.isBoolean()"
+        },
+        "fcmToken": {
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "biometricEnabled": {
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.isBoolean()"
+        },
+        "firstName": { ".validate": "newData.isString()" },
+        "secondName": { ".validate": "newData.isString()" },
+        "thirdName": { ".validate": "newData.isString()" },
+        "familyName": { ".validate": "newData.isString()" },
+        "phone": { ".validate": "newData.isString()" },
+        "email": { ".validate": "newData.isString()" },
+        "avatar": { ".validate": "newData.isString()" },
+        "nationalId": { ".validate": "newData.isString()" },
+        "cardType": { ".validate": "newData.isString()" },
+        "cardNumber": { ".validate": "newData.isString()" },
+        "cardIssuedAt": { ".validate": "newData.isString()" },
+        "governorate": { ".validate": "newData.isString()" },
+        "theme": { ".validate": "newData.isString() && (newData.val() == 'light' || newData.val() == 'dark')" },
+        "userId": { ".validate": "newData.isString()" },
+        "name": { ".validate": "newData.isString()" },
+        "passwordChangedAt": { ".validate": "newData.isString()" },
+        "kycRejectReason": { ".validate": "newData.isString()" },
+        "kycIdPhoto": { ".validate": "newData.isString()" },
+        "kycSelfie": { ".validate": "newData.isString()" },
+        "kycIdNumber": { ".validate": "newData.isString()" },
+        "kycSubmittedAt": { ".validate": "newData.isString()" },
+        "debugMode": { ".validate": "newData.isBoolean()" },
+        "investments": {
+          ".read": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && auth.uid == $uid",
+          "$invId": {
+            ".validate": "newData.hasChildren(['id', 'amount', 'status', 'planName', 'createdAt'])"
+          }
+        }
+      }
+    },
+    "userIds": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$userId": { ".validate": "newData.isString()" }
+    },
+    "nationalIds": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$nationalId": { ".validate": "newData.isString()" }
+    },
+    "phones": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$phoneKey": { ".validate": "newData.isString()" }
+    },
+    "notifications": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null",
+        "$notifId": {
+          ".validate": "newData.hasChildren(['id', 'title', 'body', 'type', 'isRead', 'createdAt'])",
+          "id": { ".validate": "newData.isString()" },
+          "title": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 200" },
+          "body": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 1000" },
+          "type": { ".validate": "newData.isString() && (newData.val() == 'info' || newData.val() == 'transaction' || newData.val() == 'security' || newData.val() == 'promo')" },
+          "isRead": { ".validate": "newData.isBoolean()" },
+          "createdAt": { ".validate": "newData.isString()" },
+          "data": { ".validate": true }
+        }
+      }
+    },
+    "adminNotifications": {
+      ".indexOn": ["createdAt", "category", "type"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$notifId": {
+        ".validate": "newData.hasChildren(['id', 'title', 'body', 'type'])",
+        "title": { ".validate": "newData.isString() && newData.val().length <= 200" },
+        "body": { ".validate": "newData.isString() && newData.val().length <= 1000" },
+        "type": { ".validate": "newData.isString()" },
+        "category": { ".validate": "newData.isString()" },
+        "isRead": { ".validate": "newData.isBoolean()" },
+        "createdAt": { ".validate": "newData.isString()" },
+        "sentAt": { ".validate": "newData.isString()" },
+        "data": { ".validate": true }
+      }
+    },
+    "transactions": {
+      ".indexOn": ["fromUserId", "toUserId", "createdAt", "type", "status"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$txnId": {
+        ".validate": "newData.hasChildren(['id', 'fromUserId', 'toUserId', 'amount', 'currency', 'type', 'status', 'createdAt'])",
+        "id": { ".validate": "newData.isString() && newData.val().length > 0" },
+        "fromUserId": { ".validate": "newData.isString()" },
+        "toUserId": { ".validate": "newData.isString()" },
+        "amount": { ".validate": "newData.isNumber() && newData.val() > 0" },
+        "currency": { ".validate": "newData.isString() && (newData.val() == 'YER' || newData.val() == 'SAR' || newData.val() == 'USD')" },
+        "type": { ".validate": "newData.isString() && (newData.val() == 'transfer' || newData.val() == 'deposit' || newData.val() == 'withdraw' || newData.val() == 'order' || newData.val() == 'refund' || newData.val() == 'gift_code' || newData.val() == 'promo' || newData.val() == 'investment' || newData.val() == 'savings' || newData.val() == 'api_order')" },
+        "status": { ".validate": "newData.isString() && (newData.val() == 'completed' || newData.val() == 'pending' || newData.val() == 'cancelled' || newData.val() == 'refunded' || newData.val() == 'processing')" },
+        "description": { ".validate": "newData.isString()" },
+        "createdAt": { ".validate": "newData.isString()" },
+        "apiTransactionId": { ".validate": "newData.isString()" },
+        "apiProvider": { ".validate": "newData.isString()" }
+      }
+    },
+    "orders": {
+      ".indexOn": ["userId", "status", "createdAt", "providerId"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$orderId": {
+        ".validate": "newData.hasChildren(['id', 'userId', 'status', 'createdAt'])",
+        "id": { ".validate": "newData.isString()" },
+        "userId": { ".validate": "newData.isString()" },
+        "status": { ".validate": "newData.isString() && (newData.val() == 'pending' || newData.val() == 'processing' || newData.val() == 'completed' || newData.val() == 'cancelled' || newData.val() == 'refunded')" },
+        "amount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "originalPrice": { ".validate": "newData.isNumber()" },
+        "ourCommission": { ".validate": "newData.isNumber()" },
+        "finalPrice": { ".validate": "newData.isNumber()" },
+        "currency": { ".validate": "newData.isString()" },
+        "packageName": { ".validate": "newData.isString()" },
+        "providerId": { ".validate": "newData.isString()" },
+        "executionType": { ".validate": "newData.isString()" },
+        "apiProvider": { ".validate": "newData.isString()" },
+        "apiTransactionId": { ".validate": "newData.isString()" },
+        "createdAt": { ".validate": "newData.isString()" },
+        "completedAt": { ".validate": "newData.isString()" },
+        "reviewedAt": { ".validate": "newData.isString()" }
+      }
+    },
+    "depositRequests": {
+      ".indexOn": ["userId", "status", "createdAt"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$reqId": {
+        ".validate": "newData.hasChildren(['id', 'userId', 'amount', 'currency', 'status', 'createdAt'])",
+        "id": { ".validate": "newData.isString()" },
+        "userId": { ".validate": "newData.isString()" },
+        "amount": { ".validate": "newData.isNumber() && newData.val() > 0" },
+        "currency": { ".validate": "newData.isString() && (newData.val() == 'YER' || newData.val() == 'SAR' || newData.val() == 'USD')" },
+        "status": { ".validate": "newData.isString() && (newData.val() == 'pending' || newData.val() == 'approved' || newData.val() == 'rejected')" },
+        "createdAt": { ".validate": "newData.isString()" },
+        "reviewedAt": { ".validate": "newData.isString()" },
+        "receiptImageUrl": { ".validate": "newData.isString()" },
+        "bankName": { ".validate": "newData.isString()" },
+        "senderName": { ".validate": "newData.isString()" },
+        "userName": { ".validate": "newData.isString()" }
+      }
+    },
+    "withdrawRequests": {
+      ".indexOn": ["userId", "status", "createdAt"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$reqId": {
+        ".validate": "newData.hasChildren(['id', 'userId', 'amount', 'currency', 'status', 'createdAt'])",
+        "id": { ".validate": "newData.isString()" },
+        "userId": { ".validate": "newData.isString()" },
+        "amount": { ".validate": "newData.isNumber() && newData.val() > 0" },
+        "currency": { ".validate": "newData.isString() && (newData.val() == 'YER' || newData.val() == 'SAR' || newData.val() == 'USD')" },
+        "status": { ".validate": "newData.isString() && (newData.val() == 'pending' || newData.val() == 'approved' || newData.val() == 'rejected')" },
+        "createdAt": { ".validate": "newData.isString()" },
+        "reviewedAt": { ".validate": "newData.isString()" },
+        "bankName": { ".validate": "newData.isString()" },
+        "accountName": { ".validate": "newData.isString()" },
+        "accountNumber": { ".validate": "newData.isString()" },
+        "userName": { ".validate": "newData.isString()" }
+      }
+    },
+    "providers": {
+      ".indexOn": ["categoryId", "isActive", "name"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$providerId": {
+        ".validate": "newData.hasChildren(['id', 'name'])",
+        "id": { ".validate": "newData.isString()" },
+        "name": { ".validate": "newData.isString() && newData.val().length > 0" },
+        "categoryId": { ".validate": "newData.isString()" },
+        "color": { ".validate": "newData.isString()" },
+        "icon": { ".validate": "newData.isString()" },
+        "isActive": { ".validate": "newData.isBoolean()" },
+        "inputLabel": { ".validate": "newData.isString()" },
+        "inputType": { ".validate": "newData.isString()" },
+        "inputPrefix": { ".validate": "newData.isString()" },
+        "apiProvider": { ".validate": "newData.isString()" },
+        "apiEndpoint": { ".validate": "newData.isString()" },
+        "apiKey": { ".validate": "newData.isString()" },
+        "apiSecret": { ".validate": "newData.isString()" },
+        "executionType": { ".validate": "newData.isString()" }
+      }
+    },
+    "packages": {
+      ".indexOn": ["providerId", "isActive", "name"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$pkgId": {
+        ".validate": "newData.hasChildren(['id', 'name', 'price'])",
+        "id": { ".validate": "newData.isString()" },
+        "name": { ".validate": "newData.isString() && newData.val().length > 0" },
+        "price": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "currency": { ".validate": "newData.isString()" },
+        "providerId": { ".validate": "newData.isString()" },
+        "isActive": { ".validate": "newData.isBoolean()" },
+        "executionType": { ".validate": "newData.isString()" },
+        "productIdInApi": { ".validate": "newData.isString()" },
+        "costPrice": { ".validate": "newData.isNumber()" },
+        "sellingPrice": { ".validate": "newData.isNumber()" },
+        "originalPrice": { ".validate": "newData.isNumber()" },
+        "ourCommission": { ".validate": "newData.isNumber()" },
+        "finalPrice": { ".validate": "newData.isNumber()" },
+        "apiProvider": { ".validate": "newData.isString()" }
+      }
+    },
+    "promo-codes": {
+      ".indexOn": ["code", "isActive"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$codeId": {
+        ".validate": "newData.hasChildren(['id', 'code'])",
+        "id": { ".validate": "newData.isString()" },
+        "code": { ".validate": "newData.isString() && newData.val().length > 0" },
+        "isActive": { ".validate": "newData.isBoolean()" },
+        "discount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "discountType": { ".validate": "newData.isString()" },
+        "maxUses": { ".validate": "newData.isNumber()" },
+        "usedCount": { ".validate": "newData.isNumber()" },
+        "expiresAt": { ".validate": "newData.isString()" }
+      }
+    },
+    "giftCodes": {
+      ".indexOn": ["code", "isActive"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$codeId": {
+        ".validate": "newData.hasChildren(['id', 'code'])",
+        "id": { ".validate": "newData.isString()" },
+        "code": { ".validate": "newData.isString()" },
+        "isActive": { ".validate": "newData.isBoolean()" },
+        "amount": { ".validate": "newData.isNumber() && newData.val() > 0" },
+        "currency": { ".validate": "newData.isString()" },
+        "visibleToUsers": { ".validate": "newData.isBoolean()" }
+      }
+    },
+    "giftCodeRedemptions": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$codeId": {
+        "$uid": { ".validate": "newData.isBoolean() || newData.isString()" }
+      }
+    },
+    "userGiftCodes": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$codeId": { ".validate": "newData.hasChildren(['id'])" }
+    },
+    "supportChat": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "messages": {
+          "$msgId": {
+            ".validate": "newData.hasChildren(['text', 'sender', 'createdAt'])",
+            "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 5000" },
+            "sender": { ".validate": "newData.isString() && (newData.val() == 'user' || newData.val() == 'admin')" },
+            "createdAt": { ".validate": "newData.isString()" },
+            "isRead": { ".validate": "newData.isBoolean()" }
+          }
+        },
+        "unreadAdmin": { ".validate": "newData.isNumber()" },
+        "unreadUser": { ".validate": "newData.isNumber()" },
+        "lastMessage": { ".validate": "newData.isString()" },
+        "lastMessageAt": { ".validate": "newData.isString()" },
+        "userName": { ".validate": "newData.isString()" }
+      }
+    },
+    "support-tickets": {
+      ".indexOn": ["userId", "status", "createdAt"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$ticketId": {
+        ".validate": "newData.hasChildren(['id', 'userId', 'status'])",
+        "id": { ".validate": "newData.isString()" },
+        "userId": { ".validate": "newData.isString()" },
+        "status": { ".validate": "newData.isString() && (newData.val() == 'open' || newData.val() == 'in_progress' || newData.val() == 'closed')" },
+        "subject": { ".validate": "newData.isString()" },
+        "createdAt": { ".validate": "newData.isString()" }
+      }
+    },
+    "money-requests": {
+      ".indexOn": ["fromUserId", "toUserId", "status"],
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$reqId": {
+        ".validate": "newData.hasChildren(['id', 'fromUserId', 'toUserId', 'amount'])",
+        "id": { ".validate": "newData.isString()" },
+        "fromUserId": { ".validate": "newData.isString()" },
+        "toUserId": { ".validate": "newData.isString()" },
+        "amount": { ".validate": "newData.isNumber() && newData.val() > 0" },
+        "currency": { ".validate": "newData.isString()" },
+        "status": { ".validate": "newData.isString()" },
+        "createdAt": { ".validate": "newData.isString()" }
+      }
+    },
+    "savingsGoals": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        "$goalId": {
+          ".validate": "newData.hasChildren(['id', 'name', 'targetAmount'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "targetAmount": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "currentAmount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "currency": { ".validate": "newData.isString()" },
+          "isCompleted": { ".validate": "newData.isBoolean()" }
+        }
+      }
+    },
+    "adminSettings": {
+      ".read": true,
+      ".write": "auth != null",
+      "maintenance": {
+        ".read": true,
+        ".validate": "newData.hasChildren(['active']) || newData.val() == null",
+        "active": { ".validate": "newData.isBoolean()" },
+        "message": { ".validate": "newData.isString()" },
+        "estimatedTime": { ".validate": "newData.isString()" },
+        "activatedAt": { ".validate": "newData.isString()" },
+        "activatedBy": { ".validate": "newData.isString()" }
+      },
+      "forceUpdate": {
+        ".read": true,
+        ".validate": "newData.hasChildren(['active']) || newData.val() == null",
+        "active": { ".validate": "newData.isBoolean()" },
+        "minVersion": { ".validate": "newData.isString()" },
+        "message": { ".validate": "newData.isString()" },
+        "updateUrl": { ".validate": "newData.isString()" }
+      },
+      "apiProviders": {
+        "$providerId": {
+          ".validate": "newData.hasChildren(['id', 'name', 'baseUrl'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "baseUrl": { ".validate": "newData.isString()" },
+          "apiKey": { ".validate": "newData.isString()" },
+          "apiSecret": { ".validate": "newData.isString()" },
+          "method": { ".validate": "newData.isString() && (newData.val() == 'GET' || newData.val() == 'POST')" },
+          "headers": { ".validate": true },
+          "bodyTemplate": { ".validate": "newData.isString()" },
+          "responseFormat": { ".validate": "newData.isString()" },
+          "fieldMappings": { ".validate": true },
+          "sectionName": { ".validate": "newData.isString()" },
+          "sectionId": { ".validate": "newData.isString()" },
+          "isActive": { ".validate": "newData.isBoolean()" },
+          "createdAt": { ".validate": "newData.isString()" }
+        }
+      },
+      "banks": {
+        "$bankId": {
+          ".validate": "newData.hasChildren(['id', 'name'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "accountNumber": { ".validate": "newData.isString()" },
+          "accountName": { ".validate": "newData.isString()" },
+          "isActive": { ".validate": "newData.isBoolean()" }
+        }
+      },
+      "banners": {
+        "$bannerId": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": { ".validate": "newData.isString()" },
+          "title": { ".validate": "newData.isString()" },
+          "imageUrl": { ".validate": "newData.isString()" },
+          "isActive": { ".validate": "newData.isBoolean()" },
+          "order": { ".validate": "newData.isNumber()" }
+        }
+      },
+      "categories": {
+        "$catId": {
+          ".validate": "newData.hasChildren(['id', 'name'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "type": { ".validate": "newData.isString()" },
+          "icon": { ".validate": "newData.isString()" }
+        }
+      },
+      "commissions": {
+        "$commId": {
+          ".validate": "newData.hasChildren(['id'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "isActive": { ".validate": "newData.isBoolean()" },
+          "percentage": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" }
+        }
+      },
+      "instantRecharge": {
+        "$itemId": { ".validate": "newData.hasChildren(['id', 'name'])" }
+      },
+      "instantRechargeSubsections": {
+        "$subId": { ".validate": "newData.hasChildren(['id', 'name'])" }
+      },
+      "rechargeSubSections": {
+        "$subId": { ".validate": "newData.hasChildren(['id', 'name'])" }
+      },
+      "entertainmentSubSections": {
+        "$subId": { ".validate": "newData.hasChildren(['id', 'name'])" }
+      },
+      "investmentPlans": {
+        "$planId": { ".validate": "newData.hasChildren(['id', 'name'])" }
+      },
+      "sentNotifications": {
+        "$notifId": { ".validate": "newData.hasChildren(['id'])" }
+      }
+    },
+    "ownerSettings": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "sections": {
+        ".indexOn": ["order", "isVisible"],
+        "$sectionId": {
+          ".validate": "newData.hasChildren(['id', 'name'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "isVisible": { ".validate": "newData.isBoolean()" },
+          "order": { ".validate": "newData.isNumber()" },
+          "icon": { ".validate": "newData.isString()" }
+        }
+      },
+      "subsections": {
+        "$subId": {
+          ".validate": "newData.hasChildren(['id', 'name'])",
+          "id": { ".validate": "newData.isString()" },
+          "name": { ".validate": "newData.isString()" },
+          "isVisible": { ".validate": "newData.isBoolean()" },
+          "order": { ".validate": "newData.isNumber()" },
+          "icon": { ".validate": "newData.isString()" }
+        }
+      },
+      "activityLog": {
+        ".indexOn": ["createdAt", "type"],
+        "$logId": { ".validate": "newData.hasChildren(['id', 'type', 'description'])" }
+      },
+      "backups": {
+        ".indexOn": ["createdAt"],
+        "$backupId": { ".validate": "newData.hasChildren(['id', 'createdAt'])" }
+      }
+    },
+    "monitoring": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$dateKey": {
+        "metrics": { ".validate": true },
+        "errors": { ".validate": true },
+        "api": { ".validate": true },
+        "renders": { ".validate": true }
+      }
+    },
+    "emailQueue": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$emailId": { ".validate": "newData.hasChildren(['id', 'to', 'subject'])" }
+    },
+    "emailPreferences": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
+    "exchangeRates": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}

@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>تقرير الأخطاء الشامل - SOUTH Wallet</title>
+<style>
+@page {
+  size: A4;
+  margin: 20mm 18mm 20mm 18mm;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: 'Noto Sans SC', 'Noto Sans Arabic', 'Noto Sans', sans-serif;
+  background: #fff;
+  color: #1a1a2e;
+  line-height: 1.8;
+  font-size: 13px;
+}
+
+.cover {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1A0A0E 0%, #5C1A1B 50%, #8B2252 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 60px 40px;
+  page-break-after: always;
+}
+.cover h1 {
+  font-size: 42px;
+  font-weight: 900;
+  margin-bottom: 16px;
+  letter-spacing: -1px;
+}
+.cover h2 {
+  font-size: 22px;
+  font-weight: 400;
+  opacity: 0.85;
+  margin-bottom: 30px;
+}
+.cover .meta {
+  font-size: 14px;
+  opacity: 0.7;
+  margin-top: 40px;
+}
+
+.page-content {
+  padding: 0;
+}
+
+.toc {
+  page-break-after: always;
+  padding: 40px 0;
+}
+.toc h2 {
+  font-size: 24px;
+  color: #5C1A1B;
+  border-bottom: 3px solid #5C1A1B;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+.toc ul {
+  list-style: none;
+  padding: 0;
+}
+.toc li {
+  padding: 8px 0;
+  border-bottom: 1px dotted #ccc;
+  font-size: 14px;
+}
+.toc li span.num {
+  color: #5C1A1B;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+h1 {
+  font-size: 26px;
+  color: #1A0A0E;
+  border-bottom: 3px solid #5C1A1B;
+  padding-bottom: 8px;
+  margin: 30px 0 16px;
+}
+h2 {
+  font-size: 20px;
+  color: #5C1A1B;
+  margin: 24px 0 12px;
+  border-right: 4px solid #5C1A1B;
+  padding-right: 12px;
+}
+h3 {
+  font-size: 16px;
+  color: #3d1117;
+  margin: 16px 0 8px;
+}
+
+p {
+  margin-bottom: 10px;
+  text-align: justify;
+}
+
+.section {
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #eee;
+}
+
+.critical {
+  background: #fff5f5;
+  border-right: 5px solid #dc2626;
+  padding: 14px 18px;
+  margin: 12px 0;
+  border-radius: 0 8px 8px 0;
+}
+.critical .badge {
+  background: #dc2626;
+  color: #fff;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+.warning {
+  background: #fffbeb;
+  border-right: 5px solid #f59e0b;
+  padding: 14px 18px;
+  margin: 12px 0;
+  border-radius: 0 8px 8px 0;
+}
+.warning .badge {
+  background: #f59e0b;
+  color: #fff;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+.info {
+  background: #eff6ff;
+  border-right: 5px solid #3b82f6;
+  padding: 14px 18px;
+  margin: 12px 0;
+  border-radius: 0 8px 8px 0;
+}
+.info .badge {
+  background: #3b82f6;
+  color: #fff;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 12px;
+}
+th {
+  background: #5C1A1B;
+  color: #fff;
+  padding: 8px 12px;
+  text-align: right;
+  font-weight: 600;
+}
+td {
+  padding: 7px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: right;
+  vertical-align: top;
+}
+tr:nth-child(even) {
+  background: #f9fafb;
+}
+tr:hover {
+  background: #fef2f2;
+}
+
+code {
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'Sarasa Mono SC', monospace;
+  color: #9333ea;
+}
+
+.file-path {
+  color: #7c3aed;
+  font-size: 11px;
+  direction: ltr;
+  display: inline-block;
+}
+
+ul, ol {
+  padding-right: 24px;
+  margin: 8px 0;
+}
+li {
+  margin-bottom: 4px;
+}
+
+.summary-box {
+  background: linear-gradient(135deg, #1A0A0E, #3d1117);
+  color: #fff;
+  padding: 24px;
+  border-radius: 12px;
+  margin: 20px 0;
+}
+.summary-box h3 {
+  color: #fca5a5;
+  margin-bottom: 12px;
+}
+.summary-box .stat {
+  display: inline-block;
+  background: rgba(255,255,255,0.15);
+  padding: 8px 16px;
+  border-radius: 8px;
+  margin: 4px;
+  text-align: center;
+}
+.summary-box .stat .number {
+  font-size: 28px;
+  font-weight: 900;
+  display: block;
+}
+.summary-box .stat .label {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.flow-diagram {
+  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 14px 0;
+  font-size: 12px;
+}
+.flow-step {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.flow-step .step-num {
+  background: #5C1A1B;
+  color: #fff;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.flow-step.missing {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+.flow-step.exists {
+  border-color: #16a34a;
+  background: #f0fdf4;
+}
+.flow-arrow {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 16px;
+  margin: 2px 0;
+}
+
+.fix-box {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: 14px;
+  margin: 10px 0;
+}
+.fix-box h4 {
+  color: #166534;
+  margin-bottom: 6px;
+}
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <h1>تقرير الأخطاء الشامل</h1>
+  <h2>SOUTH Wallet - تطبيق المستخدم ولوحة الإدارة</h2>
+  <p style="font-size:18px; opacity:0.9;">تحليل هيكلي كامل للازدواجيات والأخطاء البرمجية<br>والفجوات في نظام API وإدارة الرصيد وتدفق الشراء</p>
+  <div class="meta">
+    <p>تاريخ التقرير: 16 يونيو 2026</p>
+    <p>المشروع: Wallet-for-working</p>
+    <p>عدد الأخطاء الحرجة: 14 | عدد الأخطاء المتوسطة: 11 | أخطاء بسيطة: 4</p>
+  </div>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<div class="toc">
+  <h2>فهرس المحتويات</h2>
+  <ul>
+    <li><span class="num">1</span> ملخص تنفيذي - الإحصائيات العامة</li>
+    <li><span class="num">2</span> أخطاء تطبيق المستخدم - الازدواجية في الأقسام</li>
+    <li><span class="num">3</span> أخطاء تطبيق المستخدم - نظام عرض الخدمات والأيقونات</li>
+    <li><span class="num">4</span> أخطاء تطبيق المستخدم - نظام الإيداع والسحب والتحويل</li>
+    <li><span class="num">5</span> أخطاء تطبيق الأدمن - الازدواجية في اللوحات</li>
+    <li><span class="num">6</span> أخطاء تطبيق الأدمن - مسارات Firebase المتضاربة</li>
+    <li><span class="num">7</span> نظام API - كيفية اتصال المزود وإدارة الرصيد</li>
+    <li><span class="num">8</span> تدفق الشراء - ماذا يحدث عند شراء المستخدم</li>
+    <li><span class="num">9</span> ماذا يحدث عند نفاد رصيد API</li>
+    <li><span class="num">10</span> فجوة التصميم مقابل التنفيذ - قاعدة البيانات</li>
+    <li><span class="num">11</span> نظام العمولات - مصمم لكن غير مفعل</li>
+    <li><span class="num">12</span> خطة الإصلاح الشاملة</li>
+  </ul>
+</div>
+
+<div class="page-content">
+
+<!-- SECTION 1: EXECUTIVE SUMMARY -->
+<h1>1. ملخص تنفيذي</h1>
+<div class="section">
+<div class="summary-box">
+  <h3>إحصائيات الأخطاء</h3>
+  <div class="stat"><span class="number">14</span><span class="label">خطأ حرج</span></div>
+  <div class="stat"><span class="number">11</span><span class="label">خطأ متوسط</span></div>
+  <div class="stat"><span class="number">4</span><span class="label">خطأ بسيط</span></div>
+  <div class="stat"><span class="number">7</span><span class="label">ازدواجية لوحات</span></div>
+  <div class="stat"><span class="number">3</span><span class="label">أنظمة بيانات متوازية</span></div>
+  <div class="stat"><span class="number">5</span><span class="label">ميزات مفقودة</span></div>
+</div>
+
+<p>بعد تحليل شامل للمشروع بالكامل، تبين وجود مشاكل هيكلية عميقة تؤثر على جميع جوانب التطبيق. المشكلة الجذرية تكمن في أن المشروع يستخدم ثلاثة أنظمة بيانات متوازية (Firebase RTDB + Supabase PostgreSQL + Prisma SQLite) دون أي آلية مزامنة بينها. هذا أدى إلى ازدواجيات شديدة في واجهة المستخدم ولوحة الإدارة، وغياب كامل لنظام تدفق الشراء عبر API، وعدم وجود طريقة للأدمن لإدارة رصيده في مزود API.</p>
+
+<p>الأخطاء تنقسم إلى أربع فئات رئيسية: (1) ازدواجية في تعريف الأقسام والخدمات عبر ملفات متعددة بتسميات مختلفة، (2) لوحات إدارية مكررة تؤدي نفس الوظيفة بسجلات بيانات مختلفة، (3) غياب كامل لنظام شراء تلقائي عبر API وآلية إيداع رصيد، (4) فجوة كبيرة بين تصميم قاعدة البيانات والتنفيذ الفعلي حيث أن جميع دوال RPC المعرّفة في Supabase لا تُستخدم أبداً.</p>
+</div>
+
+<!-- SECTION 2: USER APP DUPLICATIONS -->
+<h1>2. أخطاء تطبيق المستخدم - الازدواجية في الأقسام</h1>
+<div class="section">
+
+<h2>2.1 تعريف الأقسام في ثلاثة ملفات مختلفة</h2>
+<p>الأقسام والخدمات معرّفة بشكل مستقل في ثلاثة ملفات بتصنيفات وتسميات غير متسقة. هذا يعني أن إضافة قسم جديد في ملف واحد لا يظهره تلقائياً في الملفات الأخرى.</p>
+
+<table>
+<tr><th>معرف القسم</th><th>home-screen.tsx</th><th>store.ts</th><th>category-detail-screen.tsx</th></tr>
+<tr><td><code>service-providers</code></td><td>مزودين الخدمات</td><td>مزودين الخدمات</td><td>موجود (فارغ)</td></tr>
+<tr><td><code>wallet-services</code></td><td>خدمات المحفظة</td><td>خدمات المحفظة الخاصة بنا</td><td>8 أقسام فرعية</td></tr>
+<tr><td><code>telecom</code></td><td>الاتصالات</td><td>الاتصالات</td><td>قسمان فرعيان</td></tr>
+<tr><td><code>government</code></td><td>غير موجود</td><td>خدمات حكومية</td><td>قسمان فرعيان</td></tr>
+<tr><td><code>entertainment</code></td><td>غير موجود</td><td>غير موجود</td><td>5 أقسام فرعية</td></tr>
+<tr><td><code>cards</code></td><td>غير موجود</td><td>غير موجود</td><td>3 أقسام فرعية</td></tr>
+<tr><td><code>transfer</code></td><td>تنقل خاص</td><td>غير موجود</td><td>غير موجود</td></tr>
+<tr><td><code>recharge</code></td><td>تنقل خاص</td><td>غير موجود</td><td>غير موجود</td></tr>
+</table>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>أقسام محذوفة ما زالت موجودة:</strong> قسم الخدمات الحكومية (<code>government</code>) موجود في store.ts و category-detail-screen.tsx لكنه غير معرّف في شاشة الرئيسية. قسم الترفيه (<code>entertainment</code>) والبطاقات (<code>cards</code>) موجودان فقط كبيانات احتياطية في category-detail-screen.tsx.
+  <br><span class="file-path">home-screen.tsx:90-102 | store.ts:577-586 | category-detail-screen.tsx:59-104</span>
+</div>
+
+<h2>2.2 أقسام فرعية مكررة بين الفئات</h2>
+<p>في ملف <span class="file-path">category-detail-screen.tsx</span>، هناك تكرار حرفي للأقسام الفرعية بين الفئات المختلفة:</p>
+
+<table>
+<tr><th>القسم الفرعي</th><th>wallet-services</th><th>entertainment</th><th>cards</th></tr>
+<tr><td>shooting (ألعاب إطلاق النار)</td><td>موجود</td><td>مكرر</td><td>-</td></tr>
+<tr><td>strategy (ألعاب الاستراتيجية)</td><td>موجود</td><td>مكرر</td><td>-</td></tr>
+<tr><td>adventure (ألعاب المغامرات)</td><td>موجود</td><td>مكرر</td><td>-</td></tr>
+<tr><td>platforms (منصات الألعاب)</td><td>موجود</td><td>مكرر</td><td>-</td></tr>
+<tr><td>streaming (خدمات البث)</td><td>موجود</td><td>مكرر</td><td>-</td></tr>
+<tr><td>store-cards (بطاقات المتاجر)</td><td>موجود</td><td>-</td><td>مكرر</td></tr>
+<tr><td>gaming-cards (بطاقات الألعاب)</td><td>موجود</td><td>-</td><td>مكرر</td></tr>
+<tr><td>payment-cards (بطاقات الدفع)</td><td>موجود</td><td>-</td><td>مكرر</td></tr>
+</table>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>5 أقسام فرعية مكررة</strong> بين wallet-services و entertainment، و<strong>3 أقسام فرعية مكررة</strong> بين wallet-services و cards. هذا يعني أن المستخدم يرى نفس الخدمات في أقسام مختلفة.
+</div>
+
+<h2>2.3 قوائم شركات الاتصالات المكررة</h2>
+<p>شركات الاتصالات معرّفة بشكل مستقل في ثلاثة ملفات مختلفة مع تناقضات:</p>
+
+<table>
+<tr><th>الملف</th><th>الشركات</th><th>ملاحظة</th></tr>
+<tr><td><span class="file-path">recharge-screen.tsx:33-39</span></td><td>YM, Yo, Sabafon, Y, YNet</td><td>5 شركات</td></tr>
+<tr><td><span class="file-path">charging-companies-screen.tsx:14-21</span></td><td>YM, Yo, Sabafon, Y, YNet, YTG</td><td>6 شركات - توجد YTG الإضافية</td></tr>
+<tr><td><span class="file-path">services-screen.tsx:174</span></td><td>YM, Yo, Sabafon, Y</td><td>4 شركات فقط - ناقصة</td></tr>
+</table>
+
+<div class="warning">
+  <span class="badge">تحذير</span>
+  شركة <strong>YTG (واي تي جي)</strong> موجودة في charging-companies-screen فقط ومفقودة من الشاشتين الأخريين.
+</div>
+
+<h2>2.4 شاشات غير متصلة بالتنقل</h2>
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>شاشة الأدمن غير متصلة:</strong> <code>setActiveScreen('admin')</code> يُستدعى من home-screen.tsx (نقر 5 مرات مخفي) ومن admin-notifications.tsx، لكن <code>overlayScreens</code> في page.tsx لا تحتوي على مفتاح <code>'admin'</code>. النتيجة: التنقل لشاشة الأدمن لا يعمل.
+  <br><span class="file-path">page.tsx:651-674 | home-screen.tsx:304</span>
+</div>
+
+<div class="warning">
+  <span class="badge">تحذير</span>
+  <strong>شاشة charging-companies يتيمة:</strong> مسجلة في overlayScreens لكن لا يوجد أي مسار تنقل إليها. شاشة ميتة لا يمكن للمستخدم الوصول إليها.
+  <br><span class="file-path">page.tsx:664 | charging-companies-screen.tsx</span>
+</div>
+</div>
+
+<!-- SECTION 3: SERVICE DISPLAY & ICONS -->
+<h1>3. نظام عرض الخدمات والأيقونات</h1>
+<div class="section">
+
+<h2>3.1 المنتجات مُرمّزة بشكل ثابت وليست من قاعدة البيانات</h2>
+<p>ملف <span class="file-path">src/lib/products-data.ts</span> (أكثر من 1000 سطر) يحتوي على جميع المنتجات مكتوبة يدوياً بأسعار ثابتة بالريال اليمني بسعر صرف جامد 1 دولار = 1550 ريال مع هامش 3%. هذا الملف يُدمج مع بيانات Firebase في order-bottom-sheet.tsx:</p>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>تعارض البيانات:</strong> المنتجات تأتي من مصدرين: Zustand store (Firebase) وملف products-data.ts المرمّز يدوياً. عند الدمج، قد يحل المنتج المرمّز يدوياً محل المنتج من قاعدة البيانات، مما يسبب أسعاراً خاطئة أو منتجات مكررة.
+  <br><span class="file-path">order-bottom-sheet.tsx:24,77-80 | products-data.ts:16,23</span>
+</div>
+
+<h2>3.2 خدمات الشاشة تقرأ من Firebase وليس Supabase</h2>
+<p>شاشة <span class="file-path">services-screen.tsx</span> تُنشئ 5 مستمعين Firebase RTDB منفصلين لـ (sections, providers, walletServices, apiProviders, visibility). رغم أن Supabase يحتوي على جداول (sections, sub_sections, service_providers, product_packages)، فإن الدوال <code>supabaseService.getSections()</code> و <code>supabaseService.getServiceProviders()</code> و <code>supabaseService.getProductPackages()</code> لا تُستدعى أبداً من أي شاشة موجهة للمستخدم.</p>
+
+<h2>3.3 نظام أيقونات مزدوج ومتضارب</h2>
+<table>
+<tr><th>الملف</th><th>الغرض</th><th>العدد</th></tr>
+<tr><td><span class="file-path">src/lib/service-icons.ts</span></td><td>خدمات رئيسية + أيقونات فئات</td><td>~15 SVG</td></tr>
+<tr><td><span class="file-path">src/lib/product-icons.ts</span></td><td>اتصالات + ألعاب + بطاقات + متنوع</td><td>~40+ SVG</td></tr>
+</table>
+<p>بعض المفاتيح موجودة في كلا الملفين برموز SVG مختلفة، مما يسبب تضارب:</p>
+<code>const fallbackIconSrc = productIcons[service.iconKey] || serviceIcons[service.iconKey];</code>
+
+<div class="warning">
+  <span class="badge">تحذير</span>
+  <strong>صور خارجية غير موثوقة:</strong> category-detail-screen.tsx يحتوي على روابط CDN خارجية من codashop, seagmcdn, payermax, eneba. هذه الروابط قد تتغير أو تنقطع بدون آلية بديلة.
+  <br><span class="file-path">category-detail-screen.tsx:107-135</span>
+</div>
+
+<h2>3.4 خدمات المزودين لا تظهر بشكل صحيح</h2>
+<p>السبب الرئيسي لعدم ظهور خدمات المزودين هو أن البيانات تأتي من Firebase فقط. عند مزامنة مزود API عبر <code>syncProviderToFirebase()</code> في api-provider.ts، يتم إنشاء مسار معقد:</p>
+<div class="flow-diagram">
+  <div class="flow-step exists"><span class="step-num">1</span> مزود API يُضاف في لوحة الإدارة</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">2</span> مزامنة إلى Firebase: adminSettings/apiProviders/{id}/</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">3</span> إنشاء providers/ في Firebase + packages/ + sections/</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">4</span> شاشة الخدمات تقرأ من providers/ و sections/ - لكن المسارات غير متطابقة</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">5</span> الأيقونات: لا توجد آلية لسحب أيقونات المنتجات من API - تستخدم أيقونات افتراضية فقط</div>
+</div>
+</div>
+
+<!-- SECTION 4: DEPOSIT/WITHDRAW/TRANSFER -->
+<h1>4. نظام الإيداع والسحب والتحويل</h1>
+<div class="section">
+
+<h2>4.1 الإيداع والسحب يحفظان محلياً فقط</h2>
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>طلبات الإيداع والسحب تُحفظ في Zustand store فقط (حالة محلية) ولا تُكتب أبداً إلى Supabase.</strong> الدوال <code>supabaseService.createDepositRequest()</code> و <code>supabaseService.createWithdrawRequest()</code> موجودة لكنها لا تُستدعى أبداً. هذا يعني أن الطلبات تُفقد إذا مسح المستخدم بيانات المتصفح، وأن لوحة الإدارة التي تعتمد على Supabase لا تستطيع رؤية هذه الطلبات.
+  <br><span class="file-path">deposit-screen.tsx:562,636</span>
+</div>
+
+<h2>4.2 عدم تناسق في حفظ البيانات المالية</h2>
+<table>
+<tr><th>العملية</th><th>Firebase</th><th>Supabase</th><th>محلي فقط</th></tr>
+<tr><td>الصرافة</td><td>نعم (رصيد)</td><td>نعم (RPC + معاملة)</td><td>نعم (كاش)</td></tr>
+<tr><td>الإيداع</td><td>لا</td><td>لا</td><td>نعم فقط</td></tr>
+<tr><td>السحب</td><td>لا</td><td>لا</td><td>نعم فقط</td></tr>
+<tr><td>الشحن/الطلب</td><td>نعم (طلب + رصيد)</td><td>لا</td><td>نعم (كاش)</td></tr>
+<tr><td>التحويل</td><td>نعم (رصيد + معاملة)</td><td>لا</td><td>نعم (كاش)</td></tr>
+</table>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>شاشة الصرافة فقط</strong> تستخدم Supabase لتحديث الرصيد وإنشاء المعاملات. جميع العمليات المالية الأخرى تتجاوز Supabase تماماً.
+</div>
+
+<h2>4.3 حالة سباق في تحديث الرصيد أثناء الشحن</h2>
+<div class="critical">
+  <span class="badge">حرج</span>
+  في <span class="file-path">recharge-screen.tsx:192-226</span>، الرصيد يُحسب من الحالة المحلية ويُكتب مباشرة إلى Firebase بدون عملية ذرية. إذا حدثت عمليتان في نفس الوقت، ستقوم العملية الثانية بالكتابة فوق تحديث العملية الأولى. شاشة الصرافة تستخدم <code>supabaseService.updateBalance()</code> (دالة RPC ذرية) بشكل صحيح، لكن الشحن لا يفعل ذلك.
+</div>
+</div>
+
+<!-- SECTION 5: ADMIN APP DUPLICATIONS -->
+<h1>5. أخطاء تطبيق الأدمن - الازدواجية في اللوحات</h1>
+<div class="section">
+
+<h2>5.1 لوحة مزودي API غير متاحة (معزولة)</h2>
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>لوحة api-providers-panel.tsx (1475 سطر - أكبر لوحة) غير متاحة من الشريط الجانبي!</strong> هذه اللوحة هي الأكثر تطوراً وتحتوي على: إضافة G2Bulk سريعة، فحص الرصيد، مخطط تاريخ الرصيد، تحذير رصيد منخفض، مزامنة مع Firebase و Supabase، وتصدير سجل الرصيد. لكنها غير مدرجة في الشريط الجانبي.
+  <br><span class="file-path">sidebar.tsx:110-119 | api-providers-panel.tsx</span>
+</div>
+
+<div class="fix-box">
+  <h4>الحل: إضافة سطر واحد في sidebar.tsx</h4>
+  <code>{ id: 'api-providers', label: 'مزودي API', icon: Server, roles: ['owner'] }</code>
+</div>
+
+<h2>5.2 لوحات مكررة تتضارب</h2>
+
+<table>
+<tr><th>اللوحة الأولى</th><th>اللوحة الثانية</th><th>التضارب</th><th>التوصية</th></tr>
+<tr>
+  <td><strong>providers-panel</strong><br><span class="file-path">providers-panel.tsx</span></td>
+  <td><strong>api-providers-panel</strong><br><span class="file-path">api-providers-panel.tsx</span></td>
+  <td>كلاهما يدير المزودين لكن بنماذج بيانات مختلفة. عند مزامنة API، يُنشئ مزودين في <code>providers/</code> - نفس مسار اللوحة الأولى.</td>
+  <td>دمج أو حذف providers-panel</td>
+</tr>
+<tr>
+  <td><strong>notifications-panel</strong><br><span class="file-path">notifications-panel.tsx</span></td>
+  <td><strong>push-notifications-panel</strong><br><span class="file-path">push-notifications-panel.tsx</span></td>
+  <td>كلاهما يرسل إشعارات. الثانية أقوى (FCM + شرائح + أنواع). كلاهما يكتب لنفس مسار <code>adminNotifications/</code> بتنسيقات مختلفة.</td>
+  <td>حذف notifications-panel</td>
+</tr>
+<tr>
+  <td><strong>api-settings-panel</strong><br><span class="file-path">api-settings-panel.tsx</span></td>
+  <td><strong>api-providers-panel</strong><br><span class="file-path">api-providers-panel.tsx</span></td>
+  <td>كلاهما ينشئ/يحرر مزودي API. لكن بتنسيقات بيانات مختلفة ستستبدل بيانات بعضها البعض في Firebase.</td>
+  <td>دمج في لوحة واحدة</td>
+</tr>
+<tr>
+  <td><strong>api-sync-panel</strong><br><span class="file-path">api-sync-panel.tsx</span></td>
+  <td>المزامنة داخل api-providers-panel</td>
+  <td>يقرأ من مسار خاطئ <code>apiProviders/</code> بدلاً من <code>adminSettings/apiProviders/</code> - سيعرض دائماً فارغاً.</td>
+  <td>حذف - مغطى بواسطة اللوحة الأكبر</td>
+</tr>
+<tr>
+  <td><strong>commissions-panel</strong><br><span class="file-path">commissions-panel.tsx</span></td>
+  <td><strong>commission-config-panel</strong><br><span class="file-path">commission-config-panel.tsx</span></td>
+  <td>الأولى لرسوم المعاملات، الثانية لعمولات المزودين. تسمية مشوشة ومتداخلة.</td>
+  <td>دمج في لوحة واحدة بأقسام</td>
+</tr>
+<tr>
+  <td><strong>gift-codes-panel</strong><br><span class="file-path">gift-codes-panel.tsx</span></td>
+  <td><strong>user-gift-codes-panel</strong><br><span class="file-path">user-gift-codes-panel.tsx</span></td>
+  <td>ليست مكررة فعلاً - الأولى للأدمن ينشئ أكواد، والثانية للمستخدمين. لكن الأسماء متشابهة.</td>
+  <td>إعادة تسمية للتوضيح</td>
+</tr>
+</table>
+
+<h2>5.3 مسارات Firebase المتضاربة</h2>
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>ثلاث لوحات تقرأ/تكتب مزودي API من مسارات مختلفة:</strong>
+</div>
+<table>
+<tr><th>اللوحة</th><th>مسار Firebase</th><th>قراءة/كتابة</th></tr>
+<tr><td>api-providers-panel.tsx</td><td><code>adminSettings/apiProviders/</code></td><td>قراءة + كتابة</td></tr>
+<tr><td>api-settings-panel.tsx</td><td><code>adminSettings/apiProviders/</code></td><td>قراءة + كتابة (تنسيق مختلف!)</td></tr>
+<tr><td>api-sync-panel.tsx</td><td><code>apiProviders/</code> (مسار مختلف!)</td><td>قراءة فقط</td></tr>
+</table>
+<p>النتيجة: api-settings-panel و api-providers-panel يكتبان لنفس المسار بتنسيقات بيانات مختلفة فتستبدل بيانات بعضها البعض. و api-sync-panel يقرأ من مسار مختلف تماماً فسيظهر فارغاً دائماً.</p>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>سجل الرصيد في مسارين مختلفين:</strong>
+  <br>api-providers-panel يكتب إلى <code>adminSettings/balanceLogs/</code>
+  <br>balance-log-panel يقرأ من <code>apiBalanceLog/</code>
+  <br>النتيجة: لوحة سجل الرصيد ستظهر فارغة دائماً لأنها تقرأ من مسار مختلف عن الذي تُكتب إليه البيانات.
+</div>
+</div>
+
+<!-- SECTION 6: API SYSTEM -->
+<h1>6. نظام API - كيفية اتصال المزود وإدارة الرصيد</h1>
+<div class="section">
+
+<h2>6.1 البنية الحالية لاتصال API</h2>
+<p>ملف <span class="file-path">src/lib/api-provider.ts</span> يحتوي على تنفيذ كامل لاتصال API:</p>
+
+<table>
+<tr><th>الدالة</th><th>الغرض</th><th>تعمل؟</th></tr>
+<tr><td><code>fetchProviderBalance()</code></td><td>جلب رصيد المزود عبر <code>{baseUrl}getMe</code></td><td>نعم - لكن من الأدمن فقط</td></tr>
+<tr><td><code>fetchProviderCategories()</code></td><td>جلب فئات المزود عبر <code>{baseUrl}category</code></td><td>نعم - لكن من الأدمن فقط</td></tr>
+<tr><td><code>fetchProviderProducts()</code></td><td>جلب منتجات المزود عبر <code>{baseUrl}products?category_id=X</code></td><td>نعم - لكن من الأدمن فقط</td></tr>
+<tr><td><code>purchaseProviderProduct()</code></td><td>شراء منتج عبر <code>{baseUrl}products/{id}/purchase</code></td><td>موجودة لكن لا تُستدعى!</td></tr>
+<tr><td><code>executeApiOrder()</code></td><td>تنفيذ طلب API عام مع قوالب</td><td>موجودة لكن لا تُستدعى بشكل صحيح!</td></tr>
+<tr><td><code>syncProviderToSupabase()</code></td><td>مزامنة بيانات API إلى Supabase</td><td>موجودة لكن لا تُستدعى من العميل أبداً!</td></tr>
+<tr><td><code>syncProviderToFirebase()</code></td><td>مزامنة بيانات API إلى Firebase</td><td>نعم - تُستدعى من الأدمن</td></tr>
+<tr><td><code>checkProviderOrderStatus()</code></td><td>فحص حالة الطلب من API</td><td>موجودة لكن لا تُستدعى أبداً!</td></tr>
+</table>
+
+<h2>6.2 كيف يجب أن يعمل الاتصال</h2>
+<div class="flow-diagram">
+  <div class="flow-step exists"><span class="step-num">1</span> الأدمن يضيف مزود API (مثل G2Bulk) مع baseUrl و apiKey</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">2</span> الأدمن يضغط "مزامنة" لجلب الفئات والمنتجات من API</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">3</span> المنتجات تُحفظ في Firebase و Supabase مع أسعار التكلفة</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">4</span> الأدمن يخصص الأسعار (سعر البيع + العمولة) - غير مربوط بالنظام حالياً</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">5</span> المستخدم يرى المنتجات مع الأسعار المخصصة - يقرأ من Firebase فقط</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">6</span> عند الشراء: فحص رصيد API أولاً - غير مفعل!</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">7</span> تنفيذ الطلب عبر API - يعمل جزئياً بدون فحص رصيد</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">8</span> حساب العمولة وتسجيلها - غير مفعل بالكامل!</div>
+</div>
+
+<h2>6.3 المشكلة: لا توجد طريقة لإيداع رصيد في API</h2>
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>لا توجد أي آلية للأدمن لإيداع أموال في حساب مزود API.</strong> الأدمن يستطيع فقط:
+  <ul>
+    <li>عرض رصيد API (عبر fetchProviderBalance)</li>
+    <li>عرض تاريخ الرصيد</li>
+  </ul>
+  لكنه <strong>لا يستطيع:</strong>
+  <ul>
+    <li>إيداع/إضافة أموال إلى حساب API</li>
+    <li>إعداد شحن تلقائي عند انخفاض الرصيد</li>
+    <li>تحويل رصيد من محفظة التطبيق إلى حساب API</li>
+  </ul>
+  <p>عملياً، الأدمن يجب أن يذهب لموقع مزود API (مثل G2Bulk) ويضيف رصيداً يدوياً عبر طرق الدفع المتاحة لديهم. لا يوجد تكامل مالي مباشر بين التطبيق ومزود API.</p>
+</div>
+
+<div class="fix-box">
+  <h4>الحل الموصى به</h4>
+  <p>إضافة آلية في لوحة الإدارة تتضمن:</p>
+  <ol>
+    <li><strong>زر "شحن الرصيد"</strong> يفتح رابط موقع مزود API للدفع (حل بسيط)</li>
+    <li><strong>تسجيل يدوي للإيداع</strong>: حقل يسمح للأدمن بتسجيل أنه أودع مبلغاً مع تاريخ وإيصال</li>
+    <li><strong>فحص دوري للرصيد</strong> مع إشعار FCM عند الانخفاض عن حد معين</li>
+    <li><strong>إيقاف تلقائي للخدمات</strong> عندما ينخفض رصيد API عن الحد الأدنى</li>
+  </ol>
+</div>
+</div>
+
+<!-- SECTION 7: PURCHASE FLOW -->
+<h1>7. تدفق الشراء - ماذا يحدث عند شراء المستخدم</h1>
+<div class="section">
+
+<h2>7.1 التدفق الحالي (في order-bottom-sheet.tsx)</h2>
+<div class="flow-diagram">
+  <div class="flow-step exists"><span class="step-num">1</span> المستخدم يختار منتج من Firebase packages/</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">2</span> فحص: هل executionType = 'auto' و apiProvider موجود؟</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">3</span> فحص رصيد API - غير موجود! يتم الشراء بدون فحص</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">4</span> خصم رصيد المستخدم من Firebase عبر runTransaction()</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">5</span> إنشاء طلب في Firebase orders/{orderId}</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">6</span> إنشاء معاملة في Firebase transactions/{txId}</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">7</span> استدعاء API: إذا نجح → تحديث الطلب لـ "مكتمل"</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step exists"><span class="step-num">8</span> إذا فشل API → إرجاع رصيد المستخدم عبر runTransaction()</div>
+</div>
+
+<h2>7.2 المشاكل في التدفق الحالي</h2>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>لا يوجد فحص لرصيد API قبل الشراء:</strong> المستخدم قد يدفع ثم يفشل الطلب لأن رصيد API غير كافٍ. رغم أن رصيده سيُعاد، إلا أن هذه تجربة سيئة.
+</div>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>لا يوجد حساب للعمولة:</strong> المخطط يحتوي على commission_config و commission_log و product_packages.commission_amount لكن لا شيء من هذا يُحسب أثناء الشراء. العمولة الموجودة في الحزمة هي مجرد "هامش ربح" (سعر البيع - سعر التكلفة) لكنها لا تُسجل أو تُحسب كعمولة فعلية.
+</div>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>شاشة الشحن بدون أي اتصال API:</strong> recharge-screen.tsx تنشئ طلبات شحن دائماً بـ executionType: 'manual' (يدوي). لا يوجد أي تكامل مع G2Bulk أو أي مزود خارجي لشحن الاتصالات.
+  <br><span class="file-path">recharge-screen.tsx:210</span>
+</div>
+
+<div class="warning">
+  <span class="badge">تحذير</span>
+  <strong>قراءة Firebase مكررة:</strong> عند تنفيذ طلب API، يقرأ إعداد المزود مباشرة من Firebase رغم أن البيانات متاحة بالفعل في Zustand store.
+  <br><span class="file-path">order-bottom-sheet.tsx:127-192</span>
+</div>
+
+<h2>7.3 التدفق الصحيح المطلوب</h2>
+<div class="flow-diagram">
+  <div class="flow-step missing"><span class="step-num">1</span> المستخدم يختار منتج (من Supabase product_packages)</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">2</span> النظام يفحص execution_type (api/auto/manual)</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">3</span> إذا api: فحص رصيد API ≥ سعر التكلفة</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">4</span> خصم رصيد المستخدم عبر RPC ذرية (update_user_balance)</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">5</span> استدعاء API لتنفيذ الطلب</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">6</span> حساب العمولة من commission_config وتسجيلها في commission_log</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">7</span> إنشاء طلب في Supabase orders مع api_provider_id و api_order_id</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">8</span> إنشاء معاملة في Supabase transactions</div>
+  <div class="flow-arrow">&#8595;</div>
+  <div class="flow-step missing"><span class="step-num">9</span> متابعة حالة الطلب عبر checkProviderOrderStatus()</div>
+</div>
+</div>
+
+<!-- SECTION 8: API BALANCE EXHAUSTION -->
+<h1>8. ماذا يحدث عند نفاد رصيد API</h1>
+<div class="section">
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>لا توجد أي آلية للتعامل مع نفاد رصيد API.</strong> حالياً عندما ينفد الرصيد:
+</div>
+
+<table>
+<tr><th>السيناريو</th><th>ما يحدث حالياً</th><th>ما يجب أن يحدث</th></tr>
+<tr>
+  <td>مستخدم يشتري منتج API</td>
+  <td>API يرجع خطأ → رصيد المستخدم يُعاد → لا إشعار للأدمن</td>
+  <td>فحص مسبق للرصيد + إشعار أدمن + إيقاف الخدمة تلقائياً</td>
+</tr>
+<tr>
+  <td>رصيد API أقل من الحد</td>
+  <td>تحذير مرئي فقط في لوحة الإدارة (لا يراه أحد لأن اللوحة معزولة!)</td>
+  <td>إشعار FCM فوري للأدمن + بريد إلكتروني + تعطيل تلقائي للخدمات</td>
+</tr>
+<tr>
+  <td>رصيد API = صفر</td>
+  <td>جميع الطلبات تفشل → المستخدمون يخسرون ثقة → لا يوجد بديل</td>
+  <td>تحويل تلقائي لمزود API بديل + إيقاف المنتجات المرتبطة</td>
+</tr>
+<tr>
+  <td>طلب ناجح جزئياً</td>
+  <td>لا يوجد تتبع لحالة الطلب بعد الإرسال</td>
+  <td>فحص دوري عبر checkProviderOrderStatus() + تحديث الحالة</td>
+</tr>
+</table>
+
+<p>لوحة api-providers-panel.tsx تحتوي على ثابت <code>LOW_BALANCE_THRESHOLD = 50</code> (سطر 79) لكنه يُستخدم للعرض فقط - لا يوجد إشعار أو إجراء تلقائي عند انخفاض الرصيد عن هذا الحد.</p>
+</div>
+
+<!-- SECTION 9: DATABASE GAP -->
+<h1>9. فجوة التصميم مقابل التنفيذ - قاعدة البيانات</h1>
+<div class="section">
+
+<h2>9.1 ثلاثة أنظمة بيانات متوازية</h2>
+<p>المشروع يستخدم ثلاثة أنظمة بيانات في وقت واحد:</p>
+
+<table>
+<tr><th>النظام</th><th>المستخدم</th><th>الجداول/المسارات</th><th>الحالة</th></tr>
+<tr>
+  <td><strong>Supabase (PostgreSQL)</strong></td>
+  <td>supabase.ts, لوحة الإدارة</td>
+  <td>55 جدول</td>
+  <td>مصمم بالكامل لكن معظمه لا يُستخدم</td>
+</tr>
+<tr>
+  <td><strong>Firebase RTDB</strong></td>
+  <td>firebase.ts, تدفق الطلبات, الشاشات</td>
+  <td>مسارات مثل adminSettings/, providers/, orders/</td>
+  <td>المستخدم فعلياً في التشغيل</td>
+</tr>
+<tr>
+  <td><strong>Prisma (SQLite)</strong></td>
+  <td>prisma/schema.prisma</td>
+  <td>13 نموذج</td>
+  <td>قديم وغير مستخدم</td>
+</tr>
+</table>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>التطبيق يعمل بشكل أساسي على Firebase RTDB وليس Supabase.</strong> مخطط Supabase هو وثيقة تصميم شاملة متصلة جزئياً فقط بالكود الفعلي. مخطط Prisma يبدو أنه تكرار أقدم.
+</div>
+
+<h2>9.2 دوال RPC محددة لكن لا تُستخدم أبداً</h2>
+<table>
+<tr><th>الدالة</th><th>معرّفة؟</th><th>مستخدمة؟</th><th>المشكلة</th></tr>
+<tr><td><code>update_user_balance()</code></td><td>نعم</td><td>لا أبداً</td><td>تحديثات الرصيد تتم عبر Firebase runTransaction()</td></tr>
+<tr><td><code>create_transaction()</code></td><td>نعم</td><td>لا أبداً</td><td>المعاملات تُكتب مباشرة في Firebase</td></tr>
+<tr><td><code>get_dashboard_stats()</code></td><td>نعم</td><td>ربما من الأدمن</td><td>تُرجع بيانات من commission_log الفارغ</td></tr>
+<tr><td><code>convert_currency()</code></td><td>نعم</td><td>لا من التطبيق</td><td>أسعار الصرف تُقرأ من Firebase</td></tr>
+</table>
+
+<h2>9.3 جداول Supabase لا تُملأ أبداً</h2>
+<table>
+<tr><th>الجدول</th><th>الحالة</th><th>السبب</th></tr>
+<tr><td>api_categories</td><td>فارغ</td><td>syncProviderToSupabase() لا يُستدعى أبداً</td></tr>
+<tr><td>api_products</td><td>فارغ</td><td>syncProviderToSupabase() لا يُستدعى أبداً</td></tr>
+<tr><td>api_balance_log</td><td>فارغ</td><td>السجلات تذهب لـ Firebase adminSettings/balanceLogs/</td></tr>
+<tr><td>commission_log</td><td>فارغ</td><td>لا يوجد محرك عمولات</td></tr>
+<tr><td>commission_config</td><td>فارغ</td><td>الإعدادات في Firebase adminSettings/commissionConfig/</td></tr>
+<tr><td>orders</td><td>فارغ</td><td>الطلبات في Firebase orders/</td></tr>
+<tr><td>deposit_requests</td><td>فارغ</td><td>الطلبات في Zustand store محلي فقط</td></tr>
+<tr><td>withdraw_requests</td><td>فارغ</td><td>الطلبات في Zustand store محلي فقط</td></tr>
+<tr><td>price_overrides</td><td>فارغ</td><td>الأسعار في Firebase priceCustomization/rules/</td></tr>
+</table>
+</div>
+
+<!-- SECTION 10: COMMISSION SYSTEM -->
+<h1>10. نظام العمولات - مصمم لكن غير مفعل</h1>
+<div class="section">
+
+<p>المشروع يحتوي على نظام عمولات مصمم بالكامل في قاعدة البيانات لكنه لا يعمل إطلاقاً في الكود:</p>
+
+<table>
+<tr><th>المكون</th><th>موجود في المخطط</th><th>مفعل في الكود</th></tr>
+<tr><td>commission_config (إعدادات العمولة)</td><td>نعم - 3 مستويات (عام/مزود/منتج)</td><td>لا - الإعدادات في Firebase فقط</td></tr>
+<tr><td>commission_log (سجل العمولات)</td><td>نعم</td><td>لا - الجدول فارغ</td></tr>
+<tr><td>product_packages.commission_amount</td><td>نعم</td><td>لا - يُعرض فقط كـ "هامش ربح"</td></tr>
+<tr><td>product_packages.commission_type</td><td>نعم</td><td>لا</td></tr>
+<tr><td>api_providers.default_commission</td><td>نعم</td><td>لا</td></tr>
+<tr><td>حساب العمولة أثناء الشراء</td><td>مصمم</td><td>لا يحدث أبداً</td></tr>
+</table>
+
+<div class="critical">
+  <span class="badge">حرج</span>
+  <strong>نظام العمولات غير موجود عملياً:</strong> لوحة commission-config-panel تكتب إعدادات إلى Firebase، لكن لا شيء يقرأ هذه الإعدادات أثناء الشراء. الأدمن لا يستطيع معرفة كم ربح من العمولات لأن commission_log فارغ دائماً.
+</div>
+</div>
+
+<!-- SECTION 11: FIX PLAN -->
+<h1>11. خطة الإصلاح الشاملة</h1>
+<div class="section">
+
+<h2>11.1 إصلاحات فورية (عاجلة)</h2>
+<table>
+<tr><th>#</th><th>الإصلاح</th><th>الملف</th><th>الصعوبة</th></tr>
+<tr><td>1</td><td>إضافة api-providers للشريط الجانبي</td><td>sidebar.tsx</td><td>سهل - سطر واحد</td></tr>
+<tr><td>2</td><td>إصلاح مسار balance-log-panel</td><td>balance-log-panel.tsx</td><td>سهل - تغيير مسار</td></tr>
+<tr><td>3</td><td>إصلاح مسار api-sync-panel</td><td>api-sync-panel.tsx</td><td>سهل - تغيير مسار</td></tr>
+<tr><td>4</td><td>إصلاح توجيه شاشة الأدمن</td><td>page.tsx</td><td>سهل - إضافة مفتاح</td></tr>
+<tr><td>5</td><td>حذف notifications-panel (مكررة)</td><td>sidebar.tsx + page.tsx</td><td>سهل</td></tr>
+<tr><td>6</td><td>حذف api-sync-panel (مسار خاطئ + مكررة)</td><td>sidebar.tsx + page.tsx</td><td>سهل</td></tr>
+</table>
+
+<h2>11.2 إصلاحات هيكلية (متوسطة)</h2>
+<table>
+<tr><th>#</th><th>الإصلاح</th><th>الوصف</th><th>الصعوبة</th></tr>
+<tr><td>7</td><td>توحيد تعريف الأقسام</td><td>ملف واحد كمصدر وحيد للحقائق بدلاً من 3 ملفات</td><td>متوسط</td></tr>
+<tr><td>8</td><td>دمج providers-panel و api-providers-panel</td><td>لوحة واحدة لإدارة جميع المزودين</td><td>متوسط</td></tr>
+<tr><td>9</td><td>دمج api-settings-panel و api-providers-panel</td><td>لوحة واحدة شاملة لإعداد API</td><td>متوسط</td></tr>
+<tr><td>10</td><td>دمج commissions-panel و commission-config-panel</td><td>لوحة واحدة بأقسام (رسوم + عمولات)</td><td>متوسط</td></tr>
+<tr><td>11</td><td>إضافة إيداع/سحب إلى Supabase</td><td>استدعاء الدوال الموجودة من deposit-screen.tsx</td><td>متوسط</td></tr>
+<tr><td>12</td><td>إزالة products-data.ts المرمّز يدوياً</td><td>الاعتماد على بيانات Firebase/Supabase فقط</td><td>متوسط</td></tr>
+</table>
+
+<h2>11.3 إصلاحات معمارية (كبيرة)</h2>
+<table>
+<tr><th>#</th><th>الإصلاح</th><th>الوصف</th><th>الصعوبة</th></tr>
+<tr><td>13</td><td>بناء تدفق الشراء الكامل</td><td>فحص رصيد API + تنفيذ + حساب عمولة + تتبع حالة</td><td>كبير</td></tr>
+<tr><td>14</td><td>إضافة آلية إدارة رصيد API</td><td>شحن يدوي + تسجيل + إشعارات + إيقاف تلقائي</td><td>كبير</td></tr>
+<tr><td>15</td><td>تفعيل نظام العمولات</td><td>محرك حساب + تسجيل في commission_log + تقارير</td><td>كبير</td></tr>
+<tr><td>16</td><td>الانتقال من Firebase إلى Supabase</td><td>استخدام RPCs الذرية بدلاً من runTransaction</td><td>كبير جداً</td></tr>
+<tr><td>17</td><td>تفعيل نظام الترجمة</td><td>استبدال النصوص المرمّزة بـ i18n</td><td>كبير</td></tr>
+</table>
+
+<h2>11.4 ملخص أولويات الإصلاح</h2>
+<div class="summary-box">
+  <h3>الخطوات الأربع الأهم</h3>
+  <p><strong>1. توحيد مصدر البيانات:</strong> اختيار Supabase كمصدر أساسي وإيقاف Firebase تدريجياً. هذا يحل مشاكل الازدواجية والتضارب.</p>
+  <p><strong>2. بناء تدفق الشراء:</strong> إضافة فحص رصيد API قبل الشراء + حساب العمولات + تتبع حالة الطلب.</p>
+  <p><strong>3. إدارة رصيد API:</strong> آلية للأدمن لتتبع رصيده في API + إشعارات عند الانخفاض + إيقاف تلقائي.</p>
+  <p><strong>4. إزالة الازدواجيات:</strong> حذف اللوحات المكررة وتوحيد تعريفات الأقسام في ملف واحد.</p>
+</div>
+</div>
+
+</div>
+</body>
+</html>

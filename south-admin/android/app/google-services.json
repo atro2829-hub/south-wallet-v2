@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "501045825605",
+    "firebase_url": "https://southern-portfolio-default-rtdb.firebaseio.com",
+    "project_id": "southern-portfolio",
+    "storage_bucket": "southern-portfolio.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:501045825605:android:a0b11c5db57c9831d3932c",
+        "android_client_info": {
+          "package_name": "com.qtbm.south"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBY9UTcryFEoq8VA1zD7OVnku-fjLxw-p4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:501045825605:android:161bf71e15799e25d3932c",
+        "android_client_info": {
+          "package_name": "com.qtbm.south.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBY9UTcryFEoq8VA1zD7OVnku-fjLxw-p4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

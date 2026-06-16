@@ -1,0 +1,113 @@
+name: Build South Admin Android
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'south-admin/**'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: south-admin
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: south-admin/package-lock.json
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js static export
+        run: npm run build
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Generate debug keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/southwallet.keystore \
+            -alias southwallet \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass southwallet123 \
+            -keypass southwallet123 \
+            -dname "CN=SouthWallet, OU=Dev, O=Qtbm, L=Aden, ST=Aden, C=YE"
+
+      - name: Build Debug APK
+        working-directory: south-admin/android
+        run: |
+          ./gradlew assembleDebug
+
+      - name: Build Release APK
+        working-directory: south-admin/android
+        run: |
+          ./gradlew assembleRelease \
+            -PMYAPP_UPLOAD_STORE_FILE=southwallet.keystore \
+            -PMYAPP_UPLOAD_STORE_PASSWORD=southwallet123 \
+            -PMYAPP_UPLOAD_KEY_PASSWORD=southwallet123 \
+            -PMYAPP_UPLOAD_KEY_ALIAS=southwallet
+
+      - name: Build Release AAB
+        working-directory: south-admin/android
+        run: |
+          ./gradlew bundleRelease \
+            -PMYAPP_UPLOAD_STORE_FILE=southwallet.keystore \
+            -PMYAPP_UPLOAD_STORE_PASSWORD=southwallet123 \
+            -PMYAPP_UPLOAD_KEY_PASSWORD=southwallet123 \
+            -PMYAPP_UPLOAD_KEY_ALIAS=southwallet
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: south-admin-debug
+          path: south-admin/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: south-admin-release
+          path: south-admin/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload Release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: south-admin-aab
+          path: south-admin/android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Push to download directory
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p /home/z/my-project/download/
+          cp south-admin/android/app/build/outputs/apk/debug/app-debug.apk /home/z/my-project/download/south-admin-debug.apk || true
+          cp south-admin/android/app/build/outputs/apk/release/app-release.apk /home/z/my-project/download/south-admin-release.apk || true
+          cp south-admin/android/app/build/outputs/bundle/release/app-release.aab /home/z/my-project/download/south-admin-release.aab || true

@@ -1,0 +1,515 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* =============================================
+   Dark Maroon / Burgundy (عنابي داكن) Theme
+   محفظة الجنوب - South Wallet
+   ============================================= */
+
+:root {
+  --radius: 0.625rem;
+  /* Light Mode - Maroon Tinted */
+  --background: #FDF5F5;
+  --foreground: #2A1215;
+  --card: #FFFFFF;
+  --card-foreground: #2A1215;
+  --popover: #FFFFFF;
+  --popover-foreground: #2A1215;
+  --primary: #5C1A1B;
+  --primary-foreground: #FDF5F5;
+  --secondary: #F0DEE0;
+  --secondary-foreground: #5C1A1B;
+  --muted: #F0DEE0;
+  --muted-foreground: #8B5A5E;
+  --accent: #C41E3A;
+  --accent-foreground: #FDF5F5;
+  --destructive: #C62828;
+  --border: #E0C5C8;
+  --input: #E0C5C8;
+  --ring: #5C1A1B;
+  --chart-1: #5C1A1B;
+  --chart-2: #C41E3A;
+  --chart-3: #3D0F10;
+  --chart-4: #8B3A3E;
+  --chart-5: #D44A5C;
+  --sidebar: #FDF5F5;
+  --sidebar-foreground: #2A1215;
+  --sidebar-primary: #5C1A1B;
+  --sidebar-primary-foreground: #FDF5F5;
+  --sidebar-accent: #C41E3A;
+  --sidebar-accent-foreground: #FDF5F5;
+  --sidebar-border: #E0C5C8;
+  --sidebar-ring: #5C1A1B;
+  --success: #2E7D32;
+  --warning: #F57F17;
+  --error: #C62828;
+}
+
+.dark {
+  /* Dark Mode - Deep Maroon */
+  --background: #1A0A0E;
+  --foreground: #F5E6E8;
+  --card: #2A1215;
+  --card-foreground: #F5E6E8;
+  --popover: #2A1215;
+  --popover-foreground: #F5E6E8;
+  --primary: #C41E3A;
+  --primary-foreground: #FDF5F5;
+  --secondary: #3D0F10;
+  --secondary-foreground: #F5E6E8;
+  --muted: #3D0F10;
+  --muted-foreground: #B08A8E;
+  --accent: #5C1A1B;
+  --accent-foreground: #F5E6E8;
+  --destructive: #EF5350;
+  --border: rgba(196, 30, 58, 0.15);
+  --input: rgba(196, 30, 58, 0.2);
+  --ring: #C41E3A;
+  --chart-1: #C41E3A;
+  --chart-2: #5C1A1B;
+  --chart-3: #D44A5C;
+  --chart-4: #8B3A3E;
+  --chart-5: #E86E7E;
+  --sidebar: #1A0A0E;
+  --sidebar-foreground: #F5E6E8;
+  --sidebar-primary: #C41E3A;
+  --sidebar-primary-foreground: #FDF5F5;
+  --sidebar-accent: #5C1A1B;
+  --sidebar-accent-foreground: #F5E6E8;
+  --sidebar-border: rgba(196, 30, 58, 0.15);
+  --sidebar-ring: #C41E3A;
+  --success: #4CAF50;
+  --warning: #FFB300;
+  --error: #EF5350;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom scrollbar - Maroon themed */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(92, 26, 27, 0.25);
+  border-radius: 20px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(92, 26, 27, 0.45);
+}
+
+/* Dark mode scrollbar */
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(196, 30, 58, 0.3);
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(196, 30, 58, 0.5);
+}
+
+/* Prevent overscroll bounce + Native feel */
+html, body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection only in input fields and chat messages */
+input, textarea, .chat-message {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Safe area support */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Dark mode body background */
+.dark body {
+  background-color: #1A0A0E;
+}
+
+/* PWA standalone mode adjustments */
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Smooth transitions for theme switch */
+* {
+  transition-property: background-color, border-color;
+  transition-duration: 0.2s;
+  transition-timing-function: ease;
+}
+
+/* Override for animations that shouldn't have color transition */
+.no-theme-transition,
+.no-theme-transition * {
+  transition: none !important;
+}
+
+/* ================================
+   Responsive Grid - Jaib spec
+   3 columns always for services
+   ================================ */
+@media (max-width: 360px) {
+  .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  .grid-cols-4 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+}
+
+@media (min-width: 361px) and (max-width: 400px) {
+  .grid-cols-4 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+}
+
+/* Touch-friendly button sizes for mobile - 44px Apple HIG standard */
+button {
+  min-height: 44px;
+}
+
+/* Prevent text selection on interactive elements */
+button, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Smooth scrolling */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Prevent layout shift on scrollbar appearance */
+html {
+  overflow-y: scroll;
+}
+
+/* Input styles for mobile */
+input, textarea, select {
+  font-size: 16px !important; /* Prevents zoom on iOS */
+}
+
+/* Pull to refresh animation */
+@keyframes pullRefresh {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.animate-pull-refresh {
+  animation: pullRefresh 1s linear infinite;
+}
+
+/* ================================
+   Glassmorphism utilities - Maroon themed
+   ================================ */
+.glass {
+  background: rgba(253, 245, 245, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(196, 30, 58, 0.1);
+}
+
+.glass-dark {
+  background: rgba(26, 10, 14, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(196, 30, 58, 0.08);
+}
+
+.glass-light {
+  background: rgba(253, 245, 245, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(92, 26, 27, 0.1);
+}
+
+/* ================================
+   Animated gradient backgrounds
+   ================================ */
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animated-gradient {
+  background-size: 200% 200%;
+  animation: gradientShift 6s ease infinite;
+}
+
+/* ================================
+   Glow effects - Maroon themed
+   ================================ */
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(196, 30, 58, 0.25); }
+  50% { box-shadow: 0 0 40px rgba(196, 30, 58, 0.5); }
+}
+
+.glow-red {
+  animation: glow 2s ease-in-out infinite;
+}
+
+.glow-maroon {
+  animation: glow 2s ease-in-out infinite;
+}
+
+/* ================================
+   Pulse dot
+   ================================ */
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.5; }
+}
+
+.pulse-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+/* ================================
+   Float animation
+   ================================ */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* ================================
+   Shimmer loading - Maroon themed
+   ================================ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(196, 30, 58, 0.06) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* ================================
+   Ripple effect
+   ================================ */
+@keyframes ripple {
+  to {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* ================================
+   Spin slow
+   ================================ */
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin-slow {
+  animation: spinSlow 20s linear infinite;
+}
+
+/* ================================
+   Fade up
+   ================================ */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-up {
+  animation: fadeUp 0.5s ease-out forwards;
+}
+
+/* ================================
+   Draw path for SVG logo stroke
+   ================================ */
+@keyframes drawPath {
+  to { stroke-dashoffset: 0; }
+}
+
+.draw-path {
+  animation: drawPath 1.5s ease-out forwards;
+}
+
+/* ================================
+   Count up number
+   ================================ */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ================================
+   Slide in from right
+   ================================ */
+@keyframes slideInRight {
+  from { transform: translateX(100px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.slide-in-right {
+  animation: slideInRight 0.4s ease-out forwards;
+}
+
+/* ================================
+   Bounce subtle
+   ================================ */
+@keyframes bounceSubtle {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.bounce-subtle {
+  animation: bounceSubtle 0.3s ease;
+}
+
+/* ================================
+   Scrollbar styling (override) - Maroon themed
+   ================================ */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(196, 30, 58, 0.3);
+  border-radius: 4px;
+}
+
+/* ================================
+   Safe area for bottom nav
+   ================================ */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ================================
+   Card press effect
+   ================================ */
+.card-press {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-press:active {
+  transform: scale(0.97);
+}
+
+/* ================================
+   SVG Stroke Drawing Animation
+   For splash screen logo
+   ================================ */
+@keyframes strokeDraw {
+  0% {
+    stroke-dashoffset: 200;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.stroke-draw {
+  stroke-dasharray: 200;
+  stroke-dashoffset: 200;
+  animation: strokeDraw 1.5s ease-out forwards;
+}
+
+/* ================================
+   Scale in animation
+   ================================ */
+@keyframes scaleIn {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.scale-in {
+  animation: scaleIn 0.4s ease-out forwards;
+}
+
+/* ================================
+   Skeleton loading - Maroon themed
+   ================================ */
+@keyframes skeletonShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, rgba(92, 26, 27, 0.08) 25%, rgba(92, 26, 27, 0.16) 50%, rgba(92, 26, 27, 0.08) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s infinite;
+}
+
+.dark .skeleton {
+  background: linear-gradient(90deg, rgba(196, 30, 58, 0.06) 25%, rgba(196, 30, 58, 0.12) 50%, rgba(196, 30, 58, 0.06) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s infinite;
+}
