@@ -637,7 +637,7 @@ export async function initializeDefaultProviders(): Promise<void> {
       name: 'G2Bulk',
       nameAr: 'G2Bulk',
       type: 'g2bulk',
-      apiKey: '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45',
+      apiKey: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '',
       baseUrl: 'https://api.g2bulk.com',
       enabled: true,
       markupPercent: 16,
