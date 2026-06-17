@@ -64,7 +64,13 @@ jobs:
           sdkmanager --install "platform-tools" || true
 
       - name: Install npm dependencies
-        run: npm install --legacy-peer-deps
+        # Use npm ci for a deterministic install from package-lock.json —
+        # this is much faster and more reliable than `npm install` which can
+        # hang for 20+ minutes re-resolving the dependency tree.
+        # --legacy-peer-deps is required because some React 19 + Capacitor 8
+        # peer deps conflict.
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+        timeout-minutes: 10
 
       - name: Remove ALL API routes (incompatible with static export)
         run: rm -rf src/app/api || true
@@ -151,7 +157,9 @@ jobs:
 
       - name: Install npm dependencies
         working-directory: south-admin
-        run: npm install --legacy-peer-deps
+        # npm ci = deterministic install from package-lock.json (faster than npm install).
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+        timeout-minutes: 10
 
       - name: Build Next.js static export
         working-directory: south-admin
