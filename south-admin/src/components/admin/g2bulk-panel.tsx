@@ -130,35 +130,227 @@ export default function G2BulkPanel() {
     setSaving(false);
   };
 
-  // Sync categories
+  // Sync categories — uses Supabase directly (same path as the user app)
+  // so admins and users see the exact same data.
   const handleSyncCategories = async () => {
     setSyncing(true);
     try {
-      await syncG2BulkCategories();
-    } catch (error) {
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      const { testG2BulkConnection, saveG2BulkApiKey, getG2BulkSettings } = await import('@/lib/g2bulk');
+      const settings = await getG2BulkSettings();
+      if (!settings?.apiKey) throw new Error('G2Bulk API key not configured');
+
+      // Build a minimal ApiProvider-shaped object for the API call helper
+      const provider = {
+        id: 'g2bulk',
+        name: 'G2Bulk',
+        baseUrl: 'https://api.g2bulk.com/v1/',
+        apiKey: settings.apiKey,
+        authHeaderName: 'X-API-Key',
+        markupPercent: settings.markupPercent ?? 16,
+      };
+
+      // Fetch categories from G2Bulk /v1/category
+      const res = await fetch(`${provider.baseUrl}category`, {
+        headers: { [provider.authHeaderName]: provider.apiKey },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { categories } = await res.json();
+      let inserted = 0;
+      for (const cat of categories || []) {
+        const { error } = await supabaseAdmin.from('api_categories').upsert({
+          api_provider_id: 'g2bulk',
+          api_category_id: String(cat.id),
+          title: cat.title || `Category ${cat.id}`,
+          title_en: cat.title || `Category ${cat.id}`,
+          description: cat.description || '',
+          image_url: cat.image_url || '',
+          product_count: cat.product_count || 0,
+          is_active: true,
+          is_synced: true,
+          last_synced_at: new Date().toISOString(),
+          section_id: 'digital',
+        }, { onConflict: 'api_provider_id,api_category_id' });
+        if (!error) inserted++;
+      }
+      // Update last_sync_at
+      await supabaseAdmin.from('api_providers').update({ last_sync_at: new Date().toISOString() }).eq('id', 'g2bulk');
+      showToast?.(`تمت مزامنة ${inserted} قسم`, 'success');
+    } catch (error: any) {
       console.error('Failed to sync categories:', error);
+      showToast?.('فشل المزامنة: ' + error.message, 'error');
     }
     setSyncing(false);
   };
 
-  // Sync products
+  // Sync products — writes to service_providers + product_packages + api_products
+  // (Supabase, not Firebase). Products are routed into the "digital" section so
+  // they appear under "الخدمات الرقمية" on the user's home screen.
   const handleSyncProducts = async () => {
     setSyncing(true);
     try {
-      await syncG2BulkProducts();
-    } catch (error) {
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      const { getG2BulkSettings } = await import('@/lib/g2bulk');
+      const settings = await getG2BulkSettings();
+      if (!settings?.apiKey) throw new Error('G2Bulk API key not configured');
+
+      const baseUrl = 'https://api.g2bulk.com/v1/';
+      const apiKey = settings.apiKey;
+      const headers = { 'X-API-Key': apiKey };
+
+      // Fetch products + games in parallel. G2Bulk /v1/products does NOT return
+      // image_url, but /v1/games does — so we build a category_id→image_url map
+      // from the games endpoint and fall back to a category-title-based icon
+      // for non-game categories.
+      const [prodRes, gamesRes, catRes] = await Promise.all([
+        fetch(`${baseUrl}products`, { headers }),
+        fetch(`${baseUrl}games`, { headers }),
+        fetch(`${baseUrl}category`, { headers }),
+      ]);
+      if (!prodRes.ok) throw new Error(`HTTP ${prodRes.status}`);
+      const { products } = await prodRes.json();
+      const gamesData = gamesRes.ok ? (await gamesRes.json()).games : [];
+      const catsData = catRes.ok ? (await catRes.json()).categories : [];
+
+      // Build category lookup: id → { title, image_url }
+      const catMap: Record<string, any> = {};
+      for (const c of catsData) catMap[String(c.id)] = c;
+      // Games endpoint returns image_url — use it as a fallback for any category
+      // that matches a game's `name`.
+      const gameImageMap: Record<string, string> = {};
+      for (const g of gamesData) {
+        if (g.image_url) {
+          gameImageMap[(g.name || '').toLowerCase()] = g.image_url;
+        }
+      }
+
+      const markupPercent = settings.markupPercent ?? 16;
+      let inserted = 0, errors = 0;
+      for (const prod of products || []) {
+        try {
+          // Generate a deterministic id (TEXT PK, no default)
+          const newId = `g2bulk-prod-g2bulk-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+
+          // Pick the best available image for this product:
+          // 1) prod.image_url (rare, G2Bulk usually omits it)
+          // 2) category's image_url (from /v1/category)
+          // 3) game image_url if the category title matches a game name
+          // 4) empty string (the UI will fall back to the category icon)
+          const cat = catMap[String(prod.category_id)] || {};
+          const catTitle = (cat.title || prod.category_title || '').toLowerCase();
+          let imageUrl = prod.image_url || cat.image_url || '';
+          if (!imageUrl && catTitle) {
+            // Try exact match
+            if (gameImageMap[catTitle]) imageUrl = gameImageMap[catTitle];
+            // Try partial match (e.g. "pubg" in "Pubg Mobile UC")
+            else {
+              for (const [gameName, url] of Object.entries(gameImageMap)) {
+                if (catTitle.includes(gameName) || gameName.includes(catTitle)) {
+                  imageUrl = url;
+                  break;
+                }
+              }
+            }
+          }
+
+          // 1) service_providers — store image_url so the user app can render it
+          const { error: spError } = await supabaseAdmin.from('service_providers').upsert({
+            id: newId,
+            name: prod.title || `منتج ${prod.id}`,
+            name_en: prod.title || `Product ${prod.id}`,
+            description: prod.description || '',
+            section_id: 'digital',          // "الخدمات الرقمية"
+            sub_section_id: null,
+            api_product_id: String(prod.id),
+            api_provider_id: 'g2bulk',
+            icon: imageUrl ? '' : 'package',  // use text icon only if no image
+            image_url: imageUrl,               // ← store the actual image
+            color: '#8B5CF6',
+            is_active: true,
+            sort_order: prod.id,
+            execution_type: 'api',
+          }, { onConflict: 'id' });
+          if (spError) { errors++; continue; }
+
+          // 2) product_packages — apply markup (USD only)
+          const pkgId = `g2bulk-pkg-g2bulk-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+          const costPrice = Number(prod.unit_price) || 0;
+          const finalPriceUsd = Number((costPrice * (1 + markupPercent / 100)).toFixed(2));
+          const { error: pkgError } = await supabaseAdmin.from('product_packages').upsert({
+            id: pkgId,
+            provider_id: newId,
+            name: prod.title || `منتج ${prod.id}`,
+            name_en: prod.title || `Product ${prod.id}`,
+            description: prod.description || '',
+            price_usd: finalPriceUsd,
+            price_yer: 0,
+            price_sar: 0,
+            cost_price: costPrice,
+            cost_currency: 'USD',
+            commission_amount: Number((finalPriceUsd - costPrice).toFixed(2)),
+            commission_type: 'percentage',
+            execution_type: 'api',
+            api_product_id: String(prod.id),
+            is_active: true,
+          }, { onConflict: 'id' });
+          if (pkgError) { errors++; continue; }
+
+          // 3) api_products — mirror with image_url
+          const { error: apiProdError } = await supabaseAdmin.from('api_products').upsert({
+            api_provider_id: 'g2bulk',
+            api_category_id: String(prod.category_id),
+            api_product_id: String(prod.id),
+            name: prod.title || `Product ${prod.id}`,
+            name_en: prod.title || `Product ${prod.id}`,
+            description: prod.description || '',
+            price: costPrice,
+            currency: 'USD',
+            image_url: imageUrl,
+            is_active: true,
+            is_synced: true,
+            last_synced_at: new Date().toISOString(),
+            provider_id: newId,
+            package_id: pkgId,
+            product_data: prod,
+          }, { onConflict: 'api_provider_id,api_product_id' });
+          if (apiProdError) { errors++; continue; }
+
+          inserted++;
+        } catch (e) {
+          errors++;
+        }
+      }
+      await supabaseAdmin.from('api_providers').update({ last_sync_at: new Date().toISOString() }).eq('id', 'g2bulk');
+      showToast?.(`تمت مزامنة ${inserted} منتج (${errors} أخطاء)`, errors > 0 ? 'warning' : 'success');
+    } catch (error: any) {
       console.error('Failed to sync products:', error);
+      showToast?.('فشل المزامنة: ' + error.message, 'error');
     }
     setSyncing(false);
   };
 
-  // Full sync
+  // Full sync = categories + products + balance refresh
   const handleFullSync = async () => {
     setSyncing(true);
     try {
-      await fullG2BulkSync();
-    } catch (error) {
-      console.error('Failed to full sync:', error);
+      await handleSyncCategories();
+      await handleSyncProducts();
+      // Refresh balance
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      const balRes = await fetch('https://api.g2bulk.com/v1/getMe', {
+        headers: { 'X-API-Key': (await import('@/lib/g2bulk')).getG2BulkSettings ? (await (await import('@/lib/g2bulk')).getG2BulkSettings())?.apiKey : '' },
+      });
+      if (balRes.ok) {
+        const me = await balRes.json();
+        await supabaseAdmin.from('api_providers').update({
+          balance: me.balance || 0,
+          balance_currency: 'USD',
+          last_balance_check: new Date().toISOString(),
+        }).eq('id', 'g2bulk');
+      }
+    } catch (error: any) {
+      console.error('Failed full sync:', error);
+      showToast?.('فشل المزامنة الكاملة: ' + error.message, 'error');
     }
     setSyncing(false);
   };

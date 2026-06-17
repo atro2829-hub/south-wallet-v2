@@ -661,13 +661,24 @@ export default function CategoryDetailScreen() {
       const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const user = useAppStore.getState().user;
 
-      // Calculate price with 16% markup
-      const rawPrice = selectedApiProduct.unit_price;
-      // Check if markup is already included (from Supabase products view)
-      const isMarkupIncluded = sectionType === 'api-products' && !apiCategoryData;
-      const markedUpPrice = isMarkupIncluded ? rawPrice : rawPrice * 1.16;
-      const costPrice = isMarkupIncluded ? rawPrice / 1.16 : rawPrice;
-      const commissionAmount = markedUpPrice - costPrice;
+      // Price calculation: use the price stored in product_packages (which
+      // already includes the admin-configured markup — see syncG2BulkProducts
+      // in api-providers.ts and the admin sync handler). DO NOT re-apply 16%
+      // hardcoded here, that would double-charge the user.
+      //
+      // For backwards compat: if api_product_data has its own unit_price and no
+      // stored package price, fall back to cost + 16% (only used for unsynced
+      // direct-API products).
+      const rawPrice = selectedApiProduct.unit_price || selectedApiProduct.price_usd || selectedApiProduct.price || 0;
+      // If we have a stored package with price_usd, use it (already marked up).
+      const storedPackage = selectedApiProduct.package || selectedApiProduct.pkg;
+      const markedUpPrice = storedPackage?.price_usd
+        ? Number(storedPackage.price_usd)
+        : Number((rawPrice * 1.16).toFixed(2)); // fallback for unsynced products
+      const costPrice = storedPackage?.cost_price
+        ? Number(storedPackage.cost_price)
+        : Number(rawPrice);
+      const commissionAmount = Number((markedUpPrice - costPrice).toFixed(2));
 
       // Determine API provider ID
       const apiProviderId = sectionApiProviderId || (apiCategoryData?.provider?.id || '');

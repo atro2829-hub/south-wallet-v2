@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ref, onValue, update, get, push } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatBalance, formatNumber, currencySymbols, timeAgo, generateId, formatDateAr, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,6 +28,39 @@ import { sendNotificationToUser } from '@/lib/notifications';
 type SortField = 'name' | 'balanceYER' | 'balanceSAR' | 'balanceUSD' | 'createdAt';
 type SortDir = 'asc' | 'desc';
 
+// Map a Supabase users row (snake_case) to the camelCase shape the rest of
+// this component expects. The previous implementation read camelCase directly
+// from the snapshot — but Supabase returns snake_case, so every field was
+// undefined and the table showed blank rows / 0 balances.
+function mapDbUser(u: any) {
+  const fullName = [u.first_name, u.second_name, u.third_name, u.family_name]
+    .filter(Boolean).join(' ') || u.display_name || u.email?.split('@')[0] || '';
+  return {
+    id: u.id,
+    firebase_uid: u.firebase_uid,
+    email: u.email || '',
+    phone: u.phone || '',
+    name: fullName,
+    firstName: u.first_name || '',
+    familyName: u.family_name || '',
+    nationalId: u.national_id || '',
+    cardNumber: u.card_number || '',
+    cardType: u.card_type || '',
+    avatar: u.avatar_url || '',
+    role: u.role || 'user',
+    kycStatus: u.kyc_status || 'pending',
+    isBlocked: u.is_blocked || false,
+    isActive: u.is_active ?? true,
+    balanceYER: Number(u.balance_yer) || 0,
+    balanceSAR: Number(u.balance_sar) || 0,
+    balanceUSD: Number(u.balance_usd) || 0,
+    lastLogin: u.last_login_at,
+    createdAt: u.created_at,
+    fcmToken: u.fcm_token || '',
+    governorate: u.governorate || '',
+  };
+}
+
 export default function UsersPanel() {
   const { adminUser, showToast } = useAdminStore();
   const [users, setUsers] = useState<any[]>([]);
@@ -50,21 +82,41 @@ export default function UsersPanel() {
   const [userTransactions, setUserTransactions] = useState<any[]>([]);
   const [activeDetailTab, setActiveDetailTab] = useState('info');
 
-  useEffect(() => {
-    const usersRef = ref(database, 'users');
-    const unsub = onValue(usersRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list = Object.entries(data).map(([key, val]: [string, any]) => ({
-        id: key, ...val,
-        balanceYER: val.balanceYER || 0,
-        balanceSAR: val.balanceSAR || 0,
-        balanceUSD: val.balanceUSD || 0,
-      }));
-      setUsers(list);
+  const loadUsers = useCallback(async () => {
+    try {
+      // Use service-role client to bypass RLS so admins can see ALL users.
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) {
+        console.error('[users-panel] fetch error:', error);
+        showToast?.('فشل جلب المستخدمين: ' + error.message, 'error');
+        setUsers([]);
+      } else {
+        setUsers((data || []).map(mapDbUser));
+      }
+    } catch (e: any) {
+      console.error('[users-panel] fetch exception:', e);
+      setUsers([]);
+    } finally {
       setLoading(false);
-    });
-    return () => unsub();
-  }, []);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    loadUsers();
+    // Subscribe to realtime inserts/updates so newly-registered users appear
+    // without manual refresh.
+    const channel = supabaseAdmin
+      .channel(`users-panel-${Date.now()}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        () => loadUsers())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
+  }, [loadUsers]);
 
   const filtered = useMemo(() => {
     let result = users.filter(u => {
@@ -125,41 +177,63 @@ export default function UsersPanel() {
     setSelectedUser(user);
     setDetailOpen(true);
     setActiveDetailTab('info');
-    // Load user transactions
+    // Load user transactions from Supabase (orders + transactions tables)
     try {
-      const ordersSnap = await get(ref(database, 'orders'));
-      const ordersData = ordersSnap.val() || {};
-      const txns = Object.entries(ordersData)
-        .filter(([, v]: [string, any]) => v.userId === user.id)
-        .map(([key, v]: [string, any]) => ({ id: key, ...v, type: 'order' }))
-        .slice(0, 20);
-      setUserTransactions(txns);
-    } catch { setUserTransactions([]); }
+      const [ordersRes, txnsRes] = await Promise.all([
+        supabaseAdmin.from('orders').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),
+        supabaseAdmin.from('transactions').select('*').or(`user_id.eq.${user.id},from_user_id.eq.${user.id},to_user_id.eq.${user.id}`).order('created_at', { ascending: false }).limit(10),
+      ]);
+      const orders = (ordersRes.data || []).map((o: any) => ({ ...o, type: 'order', amount: o.amount, currency: o.currency, status: o.status, createdAt: o.created_at }));
+      const txns = (txnsRes.data || []).map((t: any) => ({ ...t, type: 'transaction', amount: t.amount, currency: t.currency, status: t.status, createdAt: t.created_at }));
+      setUserTransactions([...orders, ...txns].sort((a, b) => new Date(b.createdAt || b.created_at).getTime() - new Date(a.createdAt || a.created_at).getTime()).slice(0, 20));
+    } catch (e) {
+      console.warn('[loadUserTransactions] failed:', e);
+      setUserTransactions([]);
+    }
   };
 
   const toggleBlock = async (user: any) => {
     try {
-      await update(ref(database, `users/${user.id}`), { isBlocked: !user.isBlocked });
+      // Use Supabase service role + snake_case column name.
+      const { error } = await supabaseAdmin
+        .from('users')
+        .update({ is_blocked: !user.isBlocked, updated_at: new Date().toISOString() })
+        .eq('id', user.id);
+      if (error) throw error;
       showToast(user.isBlocked ? 'تم فك الحظر' : 'تم حظر المستخدم', 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
+      loadUsers();
+    } catch (e: any) {
+      console.error('[toggleBlock] error:', e);
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    }
   };
 
   const adjustBalance = async () => {
     if (!selectedUser || balanceAmount <= 0) { showToast('أدخل مبلغ صحيح', 'error'); return; }
     setSaving(true);
     try {
-      const balanceKey = `balance${balanceCurrency}`;
-      const currentBalance = selectedUser[balanceKey] || 0;
+      // snake_case column names
+      const balanceKey = `balance_${balanceCurrency.toLowerCase()}`;
+      const currentBalance = selectedUser[`balance${balanceCurrency}`] || 0;
       const newBalance = balanceAction === 'add' ? currentBalance + balanceAmount : Math.max(0, currentBalance - balanceAmount);
-      await update(ref(database, `users/${selectedUser.id}`), { [balanceKey]: newBalance });
+      const { error } = await supabaseAdmin
+        .from('users')
+        .update({ [balanceKey]: newBalance, updated_at: new Date().toISOString() })
+        .eq('id', selectedUser.id);
+      if (error) throw error;
 
       // Log activity
-      await push(ref(database, 'ownerSettings/activityLog'), {
-        id: generateId(), type: 'admin', action: balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد',
-        details: `${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]} ${balanceNote ? `(${balanceNote})` : ''}`,
-        adminId: adminUser?.uid, adminName: adminUser?.displayName,
-        userId: selectedUser.id, timestamp: new Date().toISOString(),
-      });
+      try {
+        await supabaseAdmin.from('activity_log').insert({
+          user_id: selectedUser.id,
+          action: balanceAction === 'add' ? 'admin_add_balance' : 'admin_subtract_balance',
+          resource_type: 'user_balance',
+          resource_id: selectedUser.id,
+          details: `${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]} ${balanceNote ? `(${balanceNote})` : ''}`,
+        });
+      } catch (logErr) {
+        console.warn('[adjustBalance] activity log failed (non-fatal):', logErr);
+      }
 
       showToast(`تم ${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]}`, 'success');
       setBalanceDialog(false);

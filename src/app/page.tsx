@@ -206,15 +206,13 @@ function AppContent() {
       }
 
       if (firebaseUser) {
-        // User is signed in via Supabase Auth
-        const currentUser = useAppStore.getState().user;
-        if (currentUser && currentUser.id === firebaseUser.uid) {
-          // Already synced, just mark auth as loaded
-          setAuthLoading(false);
-          return;
-        }
-
-        // Fetch user data from Supabase `users` table
+        // User is signed in via Supabase Auth.
+        // ALWAYS fetch the user's row from Supabase — never trust the cached
+        // Zustand state because the previous session may have stored incomplete
+        // data (e.g. card_number='' if setUser was called with camelCase keys
+        // by mistake). This is what caused the "6-digit ID disappears after
+        // restart" bug: the early-return at currentUser.id === firebaseUser.uid
+        // meant we never re-fetched card_number.
         try {
           const userRef = ref(database, `users/${firebaseUser.uid}`);
           const snapshot = await get(userRef);
@@ -229,6 +227,10 @@ function AppContent() {
             let effectiveRole: 'user' | 'admin' | 'owner' = data.role || 'user';
             if (effectiveRole !== 'owner' && (effectiveRole === 'admin' || isAdminEmail)) {
               effectiveRole = 'admin';
+            }
+            // Override: founder email is always owner
+            if ((firebaseUser.email || '').toLowerCase() === 'm775371829@gmail.com') {
+              effectiveRole = 'owner';
             }
             useAppStore.getState().setUser({
               id: firebaseUser.uid,

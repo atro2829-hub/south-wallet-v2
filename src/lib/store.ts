@@ -373,7 +373,7 @@ interface AppState {
   user: User | null;
   isAuthenticated: boolean;
   setUser: (user: User | null) => void;
-  logout: () => void;
+  logout: () => void | Promise<void>;
 
   // Theme
   theme: 'light' | 'dark';
@@ -620,7 +620,7 @@ export const useAppStore = create<AppState>()(
         }
         set({ user, isAuthenticated: !!user });
       },
-      logout: () => {
+      logout: async () => {
         const currentUser = get().user;
         // Save pinCode per-user in localStorage before clearing
         if (currentUser?.id && get().pinCode) {
@@ -628,7 +628,24 @@ export const useAppStore = create<AppState>()(
             localStorage.setItem(`pin_code_${currentUser.id}`, get().pinCode);
           }
         }
-        signOut(auth).catch(() => {});
+
+        // Sign out from Supabase Auth. Wrap in try/catch — even if the network
+        // call fails (e.g. token already expired), we must still clear local
+        // state so the user is actually logged out of the UI.
+        try {
+          // signOut is async but we await it so any error is caught here.
+          await signOut(auth);
+        } catch (e) {
+          console.warn('[logout] signOut failed (non-fatal, clearing local state anyway):', e);
+        }
+
+        // Clean up: clear notification-permission flag + FCM token so the next
+        // user doesn't accidentally receive the previous user's push notifications.
+        if (typeof window !== 'undefined') {
+          try { localStorage.removeItem('notification-permission'); } catch {}
+          try { localStorage.removeItem('fahed-net-store'); } catch {}
+        }
+
         // Keep biometricEnabled as-is so it persists per-user via localStorage
         // The actual per-user flag (biometric_enabled_<uid>) is never cleared on logout
         set({
@@ -637,9 +654,18 @@ export const useAppStore = create<AppState>()(
           activeTab: 'home',
           pinCode: '',
           isPinLocked: false,
-          // Reset biometricEnabled to false in store; it will be re-evaluated
-          // from localStorage on next login based on the user's UID
           biometricEnabled: false,
+          // Also clear cached lists so a re-login doesn't briefly show the
+          // previous user's data.
+          transactions: [],
+          orders: [],
+          notifications: [],
+          depositRequests: [],
+          withdrawRequests: [],
+          supportTickets: [],
+          moneyRequests: [],
+          savingsGoals: [],
+          escrowTransactions: [],
         });
       },
 

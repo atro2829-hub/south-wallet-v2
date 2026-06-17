@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { ref, update, push, get } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId, cn, formatDateAr, timeAgo } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, ArrowDownCircle, Clock, DollarSign, Calendar, X, ZoomIn, TrendingUp } from 'lucide-react';
+import { Search, CheckCircle, XCircle, ArrowDownCircle, Clock, DollarSign, Calendar, X, ZoomIn, TrendingUp, Zap, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { notifyDepositStatus } from '@/lib/notifications';
 
@@ -29,6 +28,7 @@ export default function DepositPanel() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [autoVerifying, setAutoVerifying] = useState(false);
 
   const filtered = useMemo(() => {
     return depositRequests.filter((d: any) => {
@@ -50,43 +50,172 @@ export default function DepositPanel() {
     todayAmount: depositRequests.filter((d: any) => d.status === 'approved' && d.createdAt?.startsWith(new Date().toISOString().split('T')[0])).reduce((s: number, d: any) => s + (d.amount || 0), 0),
   }), [depositRequests]);
 
+  // Auto-verify a crypto deposit by checking the blockchain.
+  // For USDT TRC20 we query TronGrid's /v1/transactions/{txid} endpoint and
+  // confirm the transaction exists, is successful, and was sent to our
+  // wallet address for the expected amount. If verified, we auto-approve.
+  // For non-crypto deposits (bank transfer) this returns 'not_applicable'.
+  const verifyCryptoTransaction = async (deposit: any): Promise<{ verified: boolean; reason: string }> => {
+    if (!deposit.crypto_tx_hash || !deposit.crypto_network) {
+      return { verified: false, reason: 'لا يوجد رقم معاملة (tx hash)' };
+    }
+    const network = (deposit.crypto_network || '').toUpperCase();
+    const txHash = deposit.crypto_tx_hash.trim();
+    const expectedAddress = (deposit.crypto_wallet_address || '').trim();
+    const expectedAmount = Number(deposit.amount) || 0;
+
+    try {
+      if (network === 'TRC20' || network === 'TRON') {
+        // Query TronGrid for transaction info
+        const res = await fetch(`https://api.trongrid.io/v1/transactions/${txHash}`, {
+          headers: { 'Accept': 'application/json' },
+        });
+        if (!res.ok) return { verified: false, reason: `فشل الاتصال بـ TronGrid (HTTP ${res.status})` };
+        const data = await res.json();
+        const tx = data?.data?.[0];
+        if (!tx) return { verified: false, reason: 'المعاملة غير موجودة على الشبكة' };
+        // Check the transaction is confirmed
+        if (!tx.ret || !tx.ret[0] || tx.ret[0].contractRet !== 'SUCCESS') {
+          return { verified: false, reason: 'المعاملة موجودة لكن لم تُؤكَّد بعد' };
+        }
+        // For TRC20 transfers, fetch the contract events to verify amount + recipient
+        const trc20InfoRes = await fetch(`https://api.trongrid.io/v1/transactions/${txHash}/trc20`);
+        const trc20Info = await trc20InfoRes.json();
+        const transfer = trc20Info?.data?.[0];
+        if (transfer) {
+          const toAddr = (transfer.to || '').toLowerCase();
+          const fromAddr = (transfer.from || '').toLowerCase();
+          const amount = Number(transfer.value) / 1_000_000; // USDT has 6 decimals
+          const ourAddr = (expectedAddress || '').toLowerCase();
+          if (ourAddr && toAddr !== ourAddr) {
+            return { verified: false, reason: `المستلم (${toAddr.slice(0,10)}...) لا يطابق محفظتنا` };
+          }
+          // Allow amount tolerance (±0.01 USDT) because of rounding
+          if (Math.abs(amount - expectedAmount) > 0.01) {
+            return { verified: false, reason: `المبلغ الفعلي ${amount} USDT لا يطابق ${expectedAmount}` };
+          }
+          return { verified: true, reason: `تم التحقق: ${amount} USDT من ${fromAddr.slice(0,10)}...` };
+        }
+        return { verified: false, reason: 'لم يتم العثور على تفاصيل TRC20 للمعاملة' };
+      }
+      // ERC20 / BEP20: would require an RPC provider. Out of scope for this build.
+      return { verified: false, reason: `التأكيد التلقائي غير مدعوم لشبكة ${network}. يرجى التأكيد اليدوي.` };
+    } catch (e: any) {
+      return { verified: false, reason: 'خطأ في الاتصال بالشبكة: ' + e.message };
+    }
+  };
+
+  // Internal: apply approval (used by both manual and auto paths)
+  const applyApproval = async (deposit: any, reason?: string) => {
+    // 1) Update deposit_requests status
+    const { error: depErr } = await supabaseAdmin.from('deposit_requests')
+      .update({
+        status: 'approved',
+        admin_notes: notes || reason || 'تم القبول',
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: adminUser?.uid,
+      })
+      .eq('id', deposit.id);
+    if (depErr) throw depErr;
+
+    // 2) Add the amount to the user's balance (snake_case columns)
+    if (deposit.userId && deposit.amount) {
+      const balanceCol = `balance_${(deposit.currency || 'YER').toLowerCase()}`;
+      const { data: u } = await supabaseAdmin.from('users')
+        .select(balanceCol).eq('id', deposit.userId).maybeSingle();
+      const current = Number(u?.[balanceCol] || 0);
+      const { error: balErr } = await supabaseAdmin.from('users')
+        .update({ [balanceCol]: current + Number(deposit.amount), updated_at: new Date().toISOString() })
+        .eq('id', deposit.userId);
+      if (balErr) console.warn('[approve] balance update failed:', balErr.message);
+    }
+
+    // 3) Record in transactions table
+    try {
+      await supabaseAdmin.from('transactions').insert({
+        user_id: deposit.userId,
+        amount: Number(deposit.amount),
+        currency: deposit.currency || 'YER',
+        type: 'deposit',
+        status: 'completed',
+        description: `إيداع ${deposit.method === 'crypto' ? 'عملات رقمية' : 'بنكي'} - ${deposit.userName || ''}`,
+        reference_number: deposit.id,
+        completed_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('[approve] transaction log failed (non-fatal):', e);
+    }
+
+    // 4) Notify user + admin activity log
+    try { await notifyDepositStatus(deposit.userId, deposit.amount, deposit.currency || 'YER', 'approved'); } catch {}
+    try {
+      await supabaseAdmin.from('activity_log').insert({
+        user_id: deposit.userId,
+        action: 'approve_deposit',
+        resource_type: 'deposit_request',
+        resource_id: deposit.id,
+        details: `قبول إيداع ${deposit.amount} ${currencySymbols[deposit.currency || 'YER']} من ${deposit.userName}${reason ? ` (${reason})` : ''}`,
+      });
+    } catch {}
+  };
+
   const handleApprove = async () => {
     if (!selected) return;
     try {
-      await update(ref(database, `depositRequests/${selected.id}`), {
-        status: 'approved', notes: notes || '', reviewedAt: new Date().toISOString(), reviewedBy: adminUser?.uid,
-      });
-      if (selected.userId && selected.amount) {
-        const balanceKey = `balance${selected.currency || 'YER'}`;
-        const userRef = ref(database, `users/${selected.userId}`);
-        const userSnap = await get(userRef);
-        const userData = userSnap.val();
-        if (userData) {
-          const current = userData[balanceKey] || 0;
-          await update(ref(database, `users/${selected.userId}`), { [balanceKey]: current + selected.amount });
-        }
-      }
-      try { await notifyDepositStatus(selected.userId, selected.amount, selected.currency || 'YER', 'approved'); } catch {}
-      await push(ref(database, 'ownerSettings/activityLog'), {
-        id: generateId(), type: 'admin', action: 'قبول إيداع',
-        details: `قبول إيداع ${selected.amount} ${currencySymbols[selected.currency || 'YER']} من ${selected.userName}`,
-        adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
-      });
+      await applyApproval(selected);
       showToast('تم قبول الإيداع وإضافة الرصيد', 'success');
       setDetailOpen(false); setNotes('');
-    } catch { showToast('حدث خطأ', 'error'); }
+      // Refresh the deposit list
+      const { data: refreshed } = await supabaseAdmin.from('deposit_requests').select('*').order('created_at', { ascending: false }).limit(100);
+      // Note: useAdminStore may have a setDepositRequests method — if not, the realtime subscription will pick this up.
+    } catch (e: any) {
+      console.error('[handleApprove] error:', e);
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    }
+  };
+
+  // Auto-verify: queries the blockchain and auto-approves if a valid match found
+  const handleAutoVerify = async () => {
+    if (!selected) return;
+    if (!selected.crypto_tx_hash) {
+      showToast('لا يمكن التحقق التلقائي: لا يوجد tx hash', 'error');
+      return;
+    }
+    setAutoVerifying(true);
+    try {
+      const result = await verifyCryptoTransaction(selected);
+      if (result.verified) {
+        await applyApproval(selected, result.reason);
+        showToast(`تم التأكيد التلقائي بنجاح: ${result.reason}`, 'success');
+        setDetailOpen(false); setNotes('');
+      } else {
+        showToast(`فشل التأكيد التلقائي: ${result.reason}`, 'warning');
+      }
+    } catch (e: any) {
+      showToast('خطأ في التحقق: ' + (e.message || ''), 'error');
+    } finally {
+      setAutoVerifying(false);
+    }
   };
 
   const handleReject = async () => {
     if (!selected) return;
     try {
-      await update(ref(database, `depositRequests/${selected.id}`), {
-        status: 'rejected', notes: notes || '', reviewedAt: new Date().toISOString(), reviewedBy: adminUser?.uid,
-      });
+      const { error } = await supabaseAdmin.from('deposit_requests')
+        .update({
+          status: 'rejected',
+          admin_notes: notes || '',
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: adminUser?.uid,
+        })
+        .eq('id', selected.id);
+      if (error) throw error;
       try { await notifyDepositStatus(selected.userId, selected.amount, selected.currency || 'YER', 'rejected'); } catch {}
       showToast('تم رفض الإيداع', 'success');
       setDetailOpen(false); setNotes('');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    }
   };
 
   const statusLabel: Record<string, string> = { pending: 'معلق', approved: 'مقبول', rejected: 'مرفوض' };
@@ -247,8 +376,23 @@ export default function DepositPanel() {
               {selected.status === 'pending' && (
                 <>
                   <div><Label>ملاحظات</Label><Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ملاحظات اختيارية..." /></div>
+                  {selected.method === 'crypto' && selected.crypto_tx_hash && (
+                    <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+                      <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
+                        <Zap className="w-3.5 h-3.5 inline ml-1" />
+                        تأكيد تلقائي عبر البلوكتشين
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mb-2">
+                        الشبكة: {selected.crypto_network} | TX: <span dir="ltr">{String(selected.crypto_tx_hash).slice(0,20)}...</span>
+                      </p>
+                      <Button onClick={handleAutoVerify} disabled={autoVerifying} variant="outline" size="sm" className="w-full">
+                        {autoVerifying ? <Loader2 className="w-4 h-4 ml-1 animate-spin" /> : <Zap className="w-4 h-4 ml-1" />}
+                        تحقق تلقائي من المعاملة
+                      </Button>
+                    </div>
+                  )}
                   <div className="flex gap-2">
-                    <Button onClick={handleApprove} className="flex-1 bg-green-600 hover:bg-green-700"><CheckCircle className="w-4 h-4 ml-1" />قبول</Button>
+                    <Button onClick={handleApprove} className="flex-1 bg-green-600 hover:bg-green-700"><CheckCircle className="w-4 h-4 ml-1" />قبول يدوي</Button>
                     <Button onClick={handleReject} variant="destructive" className="flex-1"><XCircle className="w-4 h-4 ml-1" />رفض</Button>
                   </div>
                 </>

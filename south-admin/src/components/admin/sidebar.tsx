@@ -41,6 +41,7 @@ import {
   Globe,
   Monitor,
   Ticket,
+  RefreshCw,
 } from 'lucide-react';
 import { signOut } from '@/lib/supabase-auth';
 import { auth } from '@/lib/firebase';
@@ -82,6 +83,10 @@ const navItems: NavItem[] = [
   { id: 'notifications', label: 'الإشعارات', icon: Bell, roles: ['admin', 'owner'] },
   { id: 'push-notifications', label: 'إرسال إشعارات', icon: Send, roles: ['admin', 'owner'] },
   { id: 'settings', label: 'الإعدادات', icon: Settings, roles: ['admin', 'owner'] },
+  { id: 'investments', label: 'إدارة الاستثمار', icon: TrendingUp, roles: ['admin', 'owner'] },
+  { id: 'api-providers', label: 'مزودو API', icon: Globe, roles: ['admin', 'owner'] },
+  { id: 'api-sync', label: 'مزامنة المنتجات', icon: RefreshCw, roles: ['admin', 'owner'] },
+  { id: 'price-customization', label: 'تخصيص الأسعار', icon: DollarSign, roles: ['admin', 'owner'] },
   // Owner-only sections
   { id: 'card-colors', label: 'ألوان البطائق', icon: Palette, roles: ['owner'] },
   { id: 'g2bulk', label: 'G2Bulk', icon: Globe, roles: ['owner'] },

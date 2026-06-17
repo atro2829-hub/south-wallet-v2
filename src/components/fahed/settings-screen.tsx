@@ -1062,7 +1062,9 @@ export default function SettingsScreen() {
       {/* Logout */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="px-4 mt-3">
         <button
-          onClick={logout}
+          onClick={async () => {
+            try { await logout(); } catch (e) { console.warn('logout failed:', e); }
+          }}
           className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl"
           style={{
             background: isDark ? '#1A1A1A' : '#FFFFFF',

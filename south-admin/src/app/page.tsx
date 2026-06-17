@@ -36,6 +36,10 @@ import EscrowPanel from '@/components/admin/escrow-panel';
 import SupportTicketsPanel from '@/components/admin/support-tickets-panel';
 import ChatMonitorPanel from '@/components/admin/chat-monitor-panel';
 import G2BulkPanel from '@/components/admin/g2bulk-panel';
+import InvestmentsPanel from '@/components/admin/investments-panel';
+import ApiProvidersPanel from '@/components/admin/api-providers-panel';
+import ApiSyncPanel from '@/components/admin/api-sync-panel';
+import PriceCustomizationPanel from '@/components/admin/price-customization-panel';
 import { Menu, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
@@ -70,6 +74,10 @@ const panelMap: Record<string, React.ComponentType> = {
   'push-notifications': PushNotificationsPanel,
   'card-colors': CardColorsPanel,
   g2bulk: G2BulkPanel,
+  investments: InvestmentsPanel,
+  'api-providers': ApiProvidersPanel,
+  'api-sync': ApiSyncPanel,
+  'price-customization': PriceCustomizationPanel,
 };
 
 export default function AdminApp() {

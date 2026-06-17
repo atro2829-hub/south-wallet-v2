@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, update, remove, push } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, cn, generateId, formatDateAr } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, Plus, Edit, Trash2, Landmark, Copy, Check, Loader2, Building2, Phone, User } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Landmark, Copy, Check, Loader2, Building2, Phone, User, ImageIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Bank {
@@ -24,6 +23,7 @@ interface Bank {
   iban?: string;
   swiftCode?: string;
   branch?: string;
+  iconUrl?: string;       // URL of the bank's logo (optional, uploaded by admin)
   isActive: boolean;
   createdAt: string;
 }
@@ -45,28 +45,55 @@ export default function BanksPanel() {
   const [formIban, setFormIban] = useState('');
   const [formSwift, setFormSwift] = useState('');
   const [formBranch, setFormBranch] = useState('');
+  const [formIconUrl, setFormIconUrl] = useState('');
   const [formActive, setFormActive] = useState(true);
 
-  useEffect(() => {
-    const banksRef = ref(database, 'adminSettings/banks');
-    const unsub = onValue(banksRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: Bank[] = Object.entries(data).map(([key, val]: [string, any]) => ({
-        id: key,
-        name: val.name || '',
-        accountName: val.accountName || '',
-        accountNumber: val.accountNumber || '',
-        iban: val.iban || '',
-        swiftCode: val.swiftCode || '',
-        branch: val.branch || '',
-        isActive: val.isActive !== false,
-        createdAt: val.createdAt || new Date().toISOString(),
-      }));
-      setBanks(list);
+  // Map a Supabase banks row (snake_case) to the Bank interface (camelCase).
+  // The previous implementation read from Firebase adminSettings/banks — which
+  // wrote to app_config as a JSON blob — but a dedicated `banks` table exists
+  // in the schema (with columns bank_name, account_name, account_number, iban,
+  // swift_code, is_active). We now read/write that table directly.
+  const mapDbBank = (b: any): Bank => ({
+    id: b.id,
+    name: b.bank_name || '',
+    accountName: b.account_name || '',
+    accountNumber: b.account_number || '',
+    iban: b.iban || '',
+    swiftCode: b.swift_code || '',
+    branch: b.branch || '',
+    iconUrl: b.icon_url || '',
+    isActive: b.is_active !== false,
+    createdAt: b.created_at || new Date().toISOString(),
+  });
+
+  const loadBanks = useCallback(async () => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('banks')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('[banks-panel] fetch error:', error);
+        setBanks([]);
+      } else {
+        setBanks((data || []).map(mapDbBank));
+      }
+    } catch (e) {
+      console.error('[banks-panel] fetch exception:', e);
+      setBanks([]);
+    } finally {
       setLoading(false);
-    });
-    return () => unsub();
+    }
   }, []);
+
+  useEffect(() => {
+    loadBanks();
+    const channel = supabaseAdmin
+      .channel(`banks-panel-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'banks' }, () => loadBanks())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
+  }, [loadBanks]);
 
   const filtered = useMemo(() => {
     return banks.filter(b => !search || b.name.includes(search) || b.accountName.includes(search) || b.accountNumber.includes(search));
@@ -87,6 +114,7 @@ export default function BanksPanel() {
       setFormIban(bank.iban || '');
       setFormSwift(bank.swiftCode || '');
       setFormBranch(bank.branch || '');
+      setFormIconUrl(bank.iconUrl || '');
       setFormActive(bank.isActive);
     } else {
       setEditing(null);
@@ -96,6 +124,7 @@ export default function BanksPanel() {
       setFormIban('');
       setFormSwift('');
       setFormBranch('');
+      setFormIconUrl('');
       setFormActive(true);
     }
     setDialog(true);
@@ -107,35 +136,55 @@ export default function BanksPanel() {
     }
     setSaving(true);
     try {
-      const data = {
-        name: formName.trim(), accountName: formAccountName.trim(),
-        accountNumber: formAccountNumber.trim(), iban: formIban.trim(),
-        swiftCode: formSwift.trim(), branch: formBranch.trim(),
-        isActive: formActive,
-        updatedAt: new Date().toISOString(),
+      // snake_case column names for the banks table
+      const payload = {
+        bank_name: formName.trim(),
+        account_name: formAccountName.trim(),
+        account_number: formAccountNumber.trim(),
+        iban: formIban.trim(),
+        swift_code: formSwift.trim(),
+        branch: formBranch.trim(),
+        icon_url: formIconUrl.trim(),
+        is_active: formActive,
+        updated_at: new Date().toISOString(),
       };
       if (editing?.id) {
-        await update(ref(database, `adminSettings/banks/${editing.id}`), data);
+        const { error } = await supabaseAdmin.from('banks').update(payload).eq('id', editing.id);
+        if (error) throw error;
       } else {
-        await push(ref(database, 'adminSettings/banks'), { ...data, createdAt: new Date().toISOString() });
+        const { error } = await supabaseAdmin.from('banks').insert(payload);
+        if (error) throw error;
       }
       showToast(editing ? 'تم تحديث البنك' : 'تم إضافة البنك', 'success');
       setDialog(false);
-    } catch { showToast('حدث خطأ', 'error'); }
-    finally { setSaving(false); }
+      loadBanks();
+    } catch (e: any) {
+      console.error('[banks-panel] save error:', e);
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    } finally { setSaving(false); }
   };
 
   const deleteBank = async (id: string) => {
     try {
-      await remove(ref(database, `adminSettings/banks/${id}`));
+      const { error } = await supabaseAdmin.from('banks').delete().eq('id', id);
+      if (error) throw error;
       showToast('تم حذف البنك', 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
+      loadBanks();
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    }
   };
 
   const toggleActive = async (bank: Bank) => {
     try {
-      await update(ref(database, `adminSettings/banks/${bank.id}`), { isActive: !bank.isActive });
-    } catch { showToast('حدث خطأ', 'error'); }
+      const { error } = await supabaseAdmin.from('banks')
+        .update({ is_active: !bank.isActive, updated_at: new Date().toISOString() })
+        .eq('id', bank.id);
+      if (error) throw error;
+      loadBanks();
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -258,6 +307,12 @@ export default function BanksPanel() {
             <div className="grid grid-cols-2 gap-3">
               <div><Label>SWIFT Code</Label><Input value={formSwift} onChange={e => setFormSwift(e.target.value)} placeholder="YOABYESC" dir="ltr" /></div>
               <div><Label>الفرع</Label><Input value={formBranch} onChange={e => setFormBranch(e.target.value)} placeholder="الفرع الرئيسي" /></div>
+            </div>
+            <div>
+              <Label>رابط أيقونة البنك (URL)</Label>
+              <Input value={formIconUrl} onChange={e => setFormIconUrl(e.target.value)} placeholder="https://example.com/bank-logo.png" dir="ltr" />
+              <p className="text-[10px] text-muted-foreground mt-1">ضع رابط صورة شعار البنك. سيظهر للمستخدمين في شاشة الإيداع.</p>
+              {formIconUrl && <img src={formIconUrl} alt="icon preview" className="w-12 h-12 mt-2 rounded-lg object-contain border" />}
             </div>
             <div className="flex items-center gap-2"><Switch checked={formActive} onCheckedChange={setFormActive} /><Label>نشط</Label></div>
           </div>

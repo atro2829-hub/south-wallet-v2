@@ -1044,7 +1044,9 @@ export default function AccountScreen() {
         className="px-4 mt-4"
       >
         <button
-          onClick={logout}
+          onClick={async () => {
+            try { await logout(); } catch (e) { console.warn('logout failed:', e); }
+          }}
           className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl"
           style={{
             background: isDark ? '#1A1A1A' : '#FFFFFF',
@@ -1058,10 +1060,14 @@ export default function AccountScreen() {
         
         {/* Delete Account */}
         <button
-          onClick={() => {
+          onClick={async () => {
             if (confirm('هل أنت متأكد من حذف حسابك؟ لا يمكن التراجع عن هذا الإجراء.')) {
               if (confirm('سيتم حذف جميع بياناتك ورصيدك نهائياً. هل تريد المتابعة؟')) {
-                logout();
+                try {
+                  await logout();
+                } catch (e) {
+                  console.warn('logout failed:', e);
+                }
               }
             }
           }}
