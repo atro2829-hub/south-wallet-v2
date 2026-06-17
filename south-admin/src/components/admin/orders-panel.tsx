@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, update, push } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, timeAgo, generateId, cn, formatDateAr } from '@/lib/utils';
 import { notifyOrderStatus } from '@/lib/notifications';
@@ -59,24 +58,30 @@ export default function OrdersPanel() {
     if (!selectedOrder) return;
     setProcessing(true);
     try {
-      await update(ref(database, `orders/${selectedOrder.id}`), {
-        status: newStatus,
-        processedAt: new Date().toISOString(),
-        processedBy: adminUser?.uid,
-        processNote: processNote || '',
-      });
+      const { error } = await supabaseAdmin.from('orders')
+        .update({
+          status: newStatus,
+          processed_by: adminUser?.uid,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', selectedOrder.id);
+      if (error) throw error;
       try {
         await notifyOrderStatus(selectedOrder.userId, selectedOrder.id, newStatus);
       } catch {}
-      await push(ref(database, 'ownerSettings/activityLog'), {
-        id: generateId(), type: 'admin', action: newStatus === 'completed' ? 'إتمام طلب' : newStatus === 'failed' ? 'فشل طلب' : 'معالجة طلب',
-        details: `تغيير حالة طلب ${selectedOrder.packageName || selectedOrder.providerName} إلى ${newStatus}`,
-        adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
-      });
+      try {
+        await supabaseAdmin.from('activity_log').insert({
+          user_id: selectedOrder.userId,
+          action: newStatus === 'completed' ? 'complete_order' : newStatus === 'failed' ? 'fail_order' : 'process_order',
+          resource_type: 'order',
+          resource_id: selectedOrder.id,
+          details: `تغيير حالة طلب ${selectedOrder.packageName || selectedOrder.providerName} إلى ${newStatus}`,
+        });
+      } catch {}
       showToast(`تم تحديث حالة الطلب`, 'success');
       setDetailOpen(false);
       setProcessNote('');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + (e.message || ''), 'error'); }
     finally { setProcessing(false); }
   };
 
@@ -84,12 +89,16 @@ export default function OrdersPanel() {
     if (!selectedOrder) return;
     setProcessing(true);
     try {
-      await update(ref(database, `orders/${selectedOrder.id}`), {
-        status: 'refunded', refundedAt: new Date().toISOString(), refundedBy: adminUser?.uid,
-      });
+      const { error } = await supabaseAdmin.from('orders')
+        .update({
+          status: 'refunded',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', selectedOrder.id);
+      if (error) throw error;
       showToast('تم استرداد المبلغ', 'success');
       setDetailOpen(false);
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + (e.message || ''), 'error'); }
     finally { setProcessing(false); }
   };
 

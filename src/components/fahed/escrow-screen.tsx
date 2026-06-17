@@ -596,7 +596,7 @@ export default function EscrowScreen() {
   // ═══════════════════════════════════════════════════════════════════════
   if (selectedEscrow) {
     const escrow = selectedEscrow;
-    const statusCfg = statusConfig[escrow.status];
+    const statusCfg = statusConfig[escrow.status] || { label: escrow.status, color: "#6B7280", bgColor: "rgba(107,114,128,0.12)", icon: Clock };
     const StatusIcon = statusCfg.icon;
     const isBuyer = escrow.buyerId === user?.id;
     const isSeller = escrow.sellerId === user?.id;
@@ -1189,7 +1189,7 @@ export default function EscrowScreen() {
               </div>
             ) : (
               activeEscrows.map((escrow, index) => {
-                const statusCfg = statusConfig[escrow.status];
+                const statusCfg = statusConfig[escrow.status] || { label: escrow.status, color: "#6B7280", bgColor: "rgba(107,114,128,0.12)", icon: Clock };
                 const StatusIcon = statusCfg.icon;
                 const isBuyer = escrow.buyerId === user?.id;
                 return (
@@ -1474,7 +1474,7 @@ export default function EscrowScreen() {
               </div>
             ) : (
               historyEscrows.map((escrow, index) => {
-                const statusCfg = statusConfig[escrow.status];
+                const statusCfg = statusConfig[escrow.status] || { label: escrow.status, color: "#6B7280", bgColor: "rgba(107,114,128,0.12)", icon: Clock };
                 const StatusIcon = statusCfg.icon;
                 const isBuyer = escrow.buyerId === user?.id;
                 return (

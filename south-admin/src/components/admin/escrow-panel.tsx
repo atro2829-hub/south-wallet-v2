@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { ref, onValue, update } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, timeAgo, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -86,30 +85,41 @@ export default function EscrowPanel() {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const escRef = ref(database, 'escrow');
-    const unsub = onValue(escRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: Escrow[] = Object.entries(data as Record<string, Record<string, unknown>>).map(([key, val]) => ({
-        id: key,
-        buyerId: val.buyerId || '',
-        buyerName: val.buyerName || 'غير معروف',
-        sellerId: val.sellerId || '',
-        sellerName: val.sellerName || 'غير معروف',
-        amount: val.amount || 0,
-        currency: val.currency || 'USD',
-        fee: val.fee || 0,
-        status: val.status || 'active',
-        description: val.description || '',
-        disputedBy: val.disputedBy || '',
-        disputeReason: val.disputeReason || '',
-        createdAt: val.createdAt || new Date().toISOString(),
-        updatedAt: val.updatedAt || '',
-        completedAt: val.completedAt || '',
-      }));
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setEscrows(list);
-      setLoading(false);
-    });
+    // Load escrows from Supabase directly (not db-compat)
+    const loadEscrows = async () => {
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('escrow_transactions')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        if (error) { console.warn('[escrow] load error:', error.message); setEscrows([]); return; }
+        const list: Escrow[] = (data || []).map((row: any) => ({
+          id: row.id,
+          buyerId: row.buyer_id || '',
+          buyerName: row.buyer_name || '',
+          sellerId: row.seller_id || '',
+          sellerName: row.seller_name || '',
+          amount: Number(row.amount) || 0,
+          currency: row.currency || 'USD',
+          fee: Number(row.commission_amount) || 0,
+          status: row.status || 'active',
+          description: row.item_description || row.description || '',
+          disputedBy: row.dispute_reason || '',
+          disputeReason: row.dispute_reason || '',
+          createdAt: row.created_at || new Date().toISOString(),
+          completedAt: row.closed_at || '',
+          reference: row.reference_code || '',
+        }));
+        setEscrows(list);
+        setLoading(false);
+      } catch (e) { console.error('[escrow] load exception:', e); setEscrows([]); setLoading(false); }
+    };
+    loadEscrows();
+    const channel = supabaseAdmin.channel(`admin-escrow-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'escrow_transactions' }, () => loadEscrows())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
     return () => unsub();
   }, []);
 
@@ -237,7 +247,7 @@ export default function EscrowPanel() {
         [`escrow/${selectedEscrow.id}/resolvedBy`]: adminUser?.uid,
         [`escrow/${selectedEscrow.id}/resolveNote`]: resolveNote,
       };
-      await update(ref(database), updates);
+      await supabaseAdmin.from('escrow_transactions').update({ status: updates.status, dispute_reason: updates.disputeReason || null, updated_at: new Date().toISOString() }).eq('id', selectedEscrow.id);
       showToast(resolveAction === 'release' ? 'تم إطلاق الأموال للبائع' : 'تم استرداد الأموال للمشتري', 'success');
       setResolveDialog(false);
       setSelectedEscrow(null);
