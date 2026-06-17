@@ -76,6 +76,66 @@ export default function ExchangeRatesPanel() {
     } catch { showToast('حدث خطأ', 'error'); }
   };
 
+  // Fetch live exchange rates from a free public API (open.er-api.com).
+  // Updates the local state; admin still needs to press "حفظ" to persist.
+  const [fetchingLive, setFetchingLive] = useState(false);
+  const handleFetchLive = async () => {
+    setFetchingLive(true);
+    try {
+      // open.er-api.com is free, no API key required, returns USD-based rates.
+      const res = await fetch('https://open.er-api.com/v6/latest/USD');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.rates) throw new Error('Invalid response');
+      const usdYer = data.rates.YER ? Math.round(data.rates.YER) : rates.USD_YER;
+      const usdSar = data.rates.SAR ? Number(data.rates.SAR.toFixed(4)) : rates.USD_SAR;
+      const sarYer = usdSar > 0 ? Math.round((usdYer / usdSar) * 100) / 100 : rates.SAR_YER;
+      setRates({ USD_YER: usdYer, USD_SAR: usdSar, SAR_YER: sarYer });
+      showToast(`تم جلب الأسعار: 1 USD = ${usdYer} YER / ${usdSar} SAR`, 'success');
+    } catch (e: any) {
+      console.error('Live rates fetch failed:', e);
+      showToast('فشل جلب الأسعار من المزود. تحقق من الإنترنت.', 'error');
+    } finally {
+      setFetchingLive(false);
+    }
+  };
+
+  // Auto-sync: when enabled, fetch live rates every 30 minutes
+  useEffect(() => {
+    if (!autoSync) return;
+    const fetchAndSave = async () => {
+      try {
+        const res = await fetch('https://open.er-api.com/v6/latest/USD');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.rates) return;
+        const usdYer = data.rates.YER ? Math.round(data.rates.YER) : null;
+        const usdSar = data.rates.SAR ? Number(data.rates.SAR.toFixed(4)) : null;
+        if (usdYer && usdSar) {
+          const sarYer = Math.round((usdYer / usdSar) * 100) / 100;
+          const newRates = { USD_YER: usdYer, USD_SAR: usdSar, SAR_YER: sarYer };
+          setRates(newRates);
+          await set(ref(database, 'adminSettings/exchangeRates'), {
+            ...newRates, autoSync: true,
+            updatedAt: new Date().toISOString(),
+            updatedBy: 'auto-sync',
+            source: 'open.er-api.com',
+          });
+          await push(ref(database, 'adminSettings/exchangeRateHistory'), {
+            ...newRates, timestamp: new Date().toISOString(),
+            updatedBy: 'auto-sync', adminName: 'النظام التلقائي',
+            source: 'open.er-api.com',
+          });
+        }
+      } catch (e) {
+        console.warn('Auto-sync exchange rates failed:', e);
+      }
+    };
+    fetchAndSave();
+    const interval = setInterval(fetchAndSave, 30 * 60 * 1000); // 30 min
+    return () => clearInterval(interval);
+  }, [autoSync]);
+
   // Calculated rates
   const calculatedRates = useMemo(() => ({
     YER_USD: 1 / rates.USD_YER,
@@ -187,7 +247,11 @@ export default function ExchangeRatesPanel() {
             </div>
           </div>
 
-          <div className="flex justify-end mt-4">
+          <div className="flex justify-end mt-4 gap-2">
+            <Button onClick={handleFetchLive} disabled={fetchingLive} variant="outline">
+              {fetchingLive ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <TrendingUp className="w-4 h-4 ml-2" />}
+              جلب الأسعار الحية (USD/YER/SAR)
+            </Button>
             <Button onClick={handleSave} disabled={saving} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
               {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Save className="w-4 h-4 ml-2" />}
               حفظ الأسعار

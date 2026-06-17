@@ -221,13 +221,19 @@ function getNetworkIcon(network: string): string {
 }
 
 function getNetworkColor(network: string): string {
+  // IMPORTANT: callers (deposit-screen.tsx) use this in template strings like
+  // `${color}15` to produce alpha hex codes (e.g. "#26A17B15"). Returning a
+  // Tailwind class (bg-red-500) produced invalid CSS like "bg-red-50015".
+  // We must return HEX values.
   const colors: Record<string, string> = {
-    'TRC20': 'bg-red-500',
-    'ERC20': 'bg-blue-500',
-    'BEP20': 'bg-yellow-500',
-    'BTC': 'bg-orange-500',
-    'ETH': 'bg-indigo-500',
-    'SOL': 'bg-purple-500',
+    'TRC20': '#26A17B',   // Tether green (TRON)
+    'ERC20': '#627EEA',   // Ethereum blue
+    'BEP20': '#F0B90B',   // Binance yellow
+    'BTC':   '#F7931A',   // Bitcoin orange
+    'ETH':   '#627EEA',   // Ethereum
+    'SOL':   '#9945FF',   // Solana purple
+    'USDT':  '#26A17B',   // USDT green
+    'USDC':  '#2775CA',   // USDC blue
   };
-  return colors[network] || 'bg-primary';
+  return colors[network] || '#5C1A1B';
 }

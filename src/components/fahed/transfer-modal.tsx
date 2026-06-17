@@ -180,73 +180,63 @@ export default function TransferModal() {
     const effectiveAmount = parseFloat(amount);
 
     try {
-      // ---- Find recipient in Firebase ----
-      let recipientUid = '';
+      // ---- Find recipient by card_number (6-digit) or phone ----
+      // We use the Supabase users table directly because the previous Firebase-style
+      // lookup via `userIds/{cardNumber}` returned the UUID, then `users/{uuid}` was
+      // fetched — but the "self-transfer" check `user.id === recipientUid` compared
+      // UUID against card_number and always evaluated to false, so users could
+      // accidentally "transfer" to themselves. The new flow looks up the recipient
+      // row once by card_number (or phone), then uses the recipient's UUID
+      // consistently for both the self-check and the balance update.
+      let recipientData: any = null;
       const fullPhone = `+967${toPhone}`;
-      const fullUserId = toUserId;
+      const fullUserId = toUserId; // 6-digit card_number
 
-      if (transferMode === 'userId') {
-        const userIdIndexRef = ref(database, `userIds/${fullUserId}`);
-        const userIdIndexSnapshot = await get(userIdIndexRef);
-        if (userIdIndexSnapshot.exists()) {
-          recipientUid = userIdIndexSnapshot.val();
-        } else {
-          const usersRef = ref(database, 'users');
-          const usersSnapshot = await get(usersRef);
-          if (usersSnapshot.exists()) {
-            usersSnapshot.forEach((child) => {
-              if (child.val()?.userId === fullUserId) {
-                recipientUid = child.key || '';
-              }
-            });
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        if (transferMode === 'userId') {
+          const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('card_number', fullUserId)
+            .maybeSingle();
+          if (error) {
+            console.warn('[transfer] recipient lookup error:', error.message);
           }
-          if (!recipientUid) {
+          if (!data) {
             setStatus('error');
             setErrorMsg('رقم الحساب غير موجود');
             setIsVerifying(false);
             return;
           }
-        }
-      } else {
-        const phoneIndexRef = ref(database, `phones/${fullPhone.replace('+', 'P')}`);
-        const phoneIndexSnapshot = await get(phoneIndexRef);
-        if (phoneIndexSnapshot.exists()) {
-          recipientUid = phoneIndexSnapshot.val();
+          recipientData = data;
         } else {
-          const usersRef = ref(database, 'users');
-          const usersSnapshot = await get(usersRef);
-          if (usersSnapshot.exists()) {
-            usersSnapshot.forEach((child) => {
-              if (child.val()?.phone === fullPhone) {
-                recipientUid = child.key || '';
-              }
-            });
-          }
-          if (!recipientUid) {
+          const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('phone', fullPhone)
+            .maybeSingle();
+          if (error) console.warn('[transfer] phone lookup error:', error.message);
+          if (!data) {
             setStatus('error');
-            setErrorMsg('رقم الهاتف غير مسجل');
+            setErrorMsg('رقم الهاتف غير موجود');
             setIsVerifying(false);
             return;
           }
+          recipientData = data;
         }
-      }
-
-      // Cannot transfer to self
-      if (user.id === recipientUid) {
+      } catch (lookupErr) {
+        console.error('[transfer] recipient lookup failed:', lookupErr);
         setStatus('error');
-        setErrorMsg('لا يمكن التحويل لنفس الحساب');
+        setErrorMsg('فشل البحث عن المستلم');
         setIsVerifying(false);
         return;
       }
 
-      // ---- Read recipient data from Firebase ----
-      const recipientRef = ref(database, `users/${recipientUid}`);
-      const recipientSnapshot = await get(recipientRef);
-      const recipientData = recipientSnapshot.val();
-
-      if (!recipientData) {
+      // ---- Self-transfer check (compare UUID to UUID) ----
+      if (user.id === recipientData.id) {
         setStatus('error');
-        setErrorMsg('المستخدم المستلم غير موجود');
+        setErrorMsg('لا يمكنك التحويل إلى حسابك الخاص');
         setIsVerifying(false);
         return;
       }
@@ -261,13 +251,18 @@ export default function TransferModal() {
         return;
       }
 
-      // Store recipient info and go to confirmation step
+      // Store recipient info and go to confirmation step.
+      // recipientData is a Supabase users row (snake_case). Normalize to camelCase
+      // so the rest of the component matches the existing User interface.
+      const displayName = recipientData.display_name
+        || [recipientData.first_name, recipientData.second_name].filter(Boolean).join(' ')
+        || 'مستخدم';
       setRecipientInfo({
-        uid: recipientUid,
-        name: recipientData.name || 'مستخدم',
-        userId: recipientData.userId || '',
+        uid: recipientData.id,                  // UUID
+        name: displayName,
+        userId: recipientData.card_number || '', // 6-digit card
         phone: recipientData.phone || '',
-        avatar: recipientData.avatar || '',
+        avatar: recipientData.avatar_url || '',
       });
       setStep('confirm');
     } catch {

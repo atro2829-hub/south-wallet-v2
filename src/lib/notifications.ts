@@ -162,25 +162,39 @@ async function getAdminFCMTokens(): Promise<string[]> {
 
 /**
  * Send a notification to admin (for admin/owner app) — in-app + FCM push
+ *
+ * Persists directly to the `admin_notifications` Supabase table using the
+ * service-role client (bypasses RLS) so user-side notifications actually land.
+ * The previous implementation went through db-compat which mapped
+ * `adminNotifications/{id}` to an UPDATE — but the table PK is a UUID and
+ * the supplied id was a string, so the UPDATE matched 0 rows. It also used
+ * camelCase keys that don't exist in the table (which uses snake_case:
+ * is_read, sent_at, navigation_target, navigation_params).
  */
 export async function sendNotificationToAdmin(notification: NotificationPayload & { category?: string }): Promise<void> {
-  const notifId = `admin_notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const notifData = {
-    id: notifId,
-    title: notification.title,
-    body: notification.body,
-    type: notification.type,
-    category: notification.category || 'general',
-    isRead: false,
-    createdAt: new Date().toISOString(),
-    sentAt: new Date().toISOString(),
-    navigationTarget: notification.navigationTarget || null,
-    navigationParams: notification.navigationParams || null,
-    data: notification.data || null,
-  };
-
-  // 1. Save to Firebase RTDB (in-app notification for admin panel)
-  await set(ref(database, `adminNotifications/${notifId}`), notifData);
+  // 1. Save to Supabase admin_notifications table (snake_case, service role)
+  try {
+    const { supabaseService } = await import('@/lib/supabase');
+    const { error } = await supabaseService.from('admin_notifications').insert({
+      title: notification.title,
+      body: notification.body,
+      type: notification.type || 'info',
+      target_role: 'admin',
+      is_read: false,
+      sent_at: new Date().toISOString(),
+      navigation_target: notification.navigationTarget || null,
+      navigation_params: notification.navigationParams || null,
+      data: {
+        ...(notification.data || {}),
+        category: notification.category || 'general',
+      },
+    });
+    if (error) {
+      console.warn('[sendNotificationToAdmin] supabase insert failed:', error.message);
+    }
+  } catch (e) {
+    console.warn('[sendNotificationToAdmin] supabase insert exception:', e);
+  }
 
   // 2. Send FCM push notification to all admin/owner devices
   try {

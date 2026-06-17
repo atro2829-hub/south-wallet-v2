@@ -653,6 +653,22 @@ export default function AuthScreen() {
         governorate: '',
         theme: 'light',
       });
+
+      // Step 4: Push-notify the admin team about the new registration.
+      // Fire-and-forget — a failure here must not block the user's signup.
+      try {
+        const { sendNotificationToAdmin } = await import('@/lib/notifications');
+        await sendNotificationToAdmin({
+          title: 'تسجيل مستخدم جديد',
+          body: `${fullName} (${regEmail}) انضم للمحفظة. رقم الحساب: ${newUserId}`,
+          type: 'info',
+          category: 'users',
+          navigationTarget: 'users',
+          data: { action: 'new_user_registered', userId: user.uid, email: regEmail, cardNumber: newUserId },
+        });
+      } catch (e) {
+        console.warn('[register] admin notification failed (non-fatal):', e);
+      }
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string };
       console.error('[register] error:', e);

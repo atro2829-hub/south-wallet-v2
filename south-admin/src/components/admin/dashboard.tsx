@@ -2,7 +2,7 @@
 
 import { useMemo, useEffect, useState, useCallback } from 'react';
 import { useAdminStore } from '@/lib/store';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { formatNumber, currencySymbols, timeAgo, cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,9 +33,10 @@ interface SupabaseUser {
   balance_yer: number;
   balance_sar: number;
   balance_usd: number;
-  kyc_status: 'none' | 'submitted' | 'verified' | 'rejected';
+  kyc_status: 'none' | 'submitted' | 'verified' | 'rejected' | 'pending';
   is_blocked: boolean;
-  last_login: string | null;
+  last_login_at: string | null;
+  card_number: string;
   created_at: string;
   updated_at: string;
 }
@@ -43,12 +44,16 @@ interface SupabaseUser {
 interface SupabaseOrder {
   id: string;
   user_id: string;
-  user_name: string;
   provider_name: string;
   package_name: string;
+  customer_input: string;
   amount: number;
   currency: string;
+  cost_price: number;
+  commission_amount: number;
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  api_provider_id: string;
+  api_order_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -56,13 +61,15 @@ interface SupabaseOrder {
 interface SupabaseDepositRequest {
   id: string;
   user_id: string;
-  user_name: string;
   amount: number;
   currency: string;
   method: string;
   status: 'pending' | 'approved' | 'rejected';
-  receipt_url: string | null;
-  notes: string | null;
+  transfer_receipt_url: string | null;
+  crypto_network: string | null;
+  crypto_wallet_address: string | null;
+  admin_notes: string | null;
+  sender_name: string;
   created_at: string;
   reviewed_at: string | null;
 }
@@ -70,12 +77,15 @@ interface SupabaseDepositRequest {
 interface SupabaseWithdrawRequest {
   id: string;
   user_id: string;
-  user_name: string;
   amount: number;
   currency: string;
   method: string;
   status: 'pending' | 'approved' | 'rejected';
-  notes: string | null;
+  crypto_network: string | null;
+  crypto_wallet_address: string | null;
+  admin_notes: string | null;
+  bank_name: string;
+  bank_account: string;
   created_at: string;
   reviewed_at: string | null;
 }
@@ -191,21 +201,23 @@ export default function Dashboard() {
     setError(null);
 
     try {
-      // Fetch all data in parallel for speed
+      // Fetch all data in parallel for speed. We use supabaseAdmin (service-role)
+      // because RLS on these tables would otherwise restrict the admin to seeing
+      // only their own rows — making the dashboard show 1 user / 0 orders.
       const [usersRes, ordersRes, depositsRes, withdrawsRes] = await Promise.all([
-        supabase
+        supabaseAdmin
           .from('users')
           .select('*')
           .order('created_at', { ascending: false }),
-        supabase
+        supabaseAdmin
           .from('orders')
           .select('*')
           .order('created_at', { ascending: false }),
-        supabase
+        supabaseAdmin
           .from('deposit_requests')
           .select('*')
           .order('created_at', { ascending: false }),
-        supabase
+        supabaseAdmin
           .from('withdraw_requests')
           .select('*')
           .order('created_at', { ascending: false }),
@@ -245,13 +257,13 @@ export default function Dashboard() {
         balanceUSD: u.balance_usd || 0,
         kycStatus: u.kyc_status || 'none',
         isBlocked: u.is_blocked || false,
-        lastLogin: u.last_login,
+        lastLogin: u.last_login_at,
         createdAt: u.created_at,
       })));
       store.setOrders(dashboardData.orders.map((o) => ({
         id: o.id,
         userId: o.user_id,
-        userName: o.user_name || 'مستخدم',
+        userName: o.customer_input || 'مستخدم',
         providerName: o.provider_name || '',
         packageName: o.package_name || '',
         amount: o.amount || 0,
@@ -262,25 +274,31 @@ export default function Dashboard() {
       store.setDepositRequests(dashboardData.depositRequests.map((d) => ({
         id: d.id,
         userId: d.user_id,
-        userName: d.user_name || 'مستخدم',
+        userName: d.sender_name || 'مستخدم',
         amount: d.amount || 0,
         currency: d.currency || 'YER',
         method: d.method || '',
         status: d.status || 'pending',
-        receiptUrl: d.receipt_url,
-        notes: d.notes,
+        receiptUrl: d.transfer_receipt_url,
+        notes: d.admin_notes,
+        cryptoNetwork: d.crypto_network,
+        cryptoWalletAddress: d.crypto_wallet_address,
         createdAt: d.created_at,
         reviewedAt: d.reviewed_at,
       })));
       store.setWithdrawRequests(dashboardData.withdrawRequests.map((w) => ({
         id: w.id,
         userId: w.user_id,
-        userName: w.user_name || 'مستخدم',
+        userName: w.bank_name || 'مستخدم',
         amount: w.amount || 0,
         currency: w.currency || 'YER',
         method: w.method || '',
         status: w.status || 'pending',
-        notes: w.notes,
+        notes: w.admin_notes,
+        cryptoNetwork: w.crypto_network,
+        cryptoWalletAddress: w.crypto_wallet_address,
+        bankName: w.bank_name,
+        bankAccount: w.bank_account,
         createdAt: w.created_at,
         reviewedAt: w.reviewed_at,
       })));
@@ -340,8 +358,8 @@ export default function Dashboard() {
     const pendingWithdrawals = withdrawals.filter((w) => w.status === 'pending').length;
 
     const activeUsers = allUsers.filter((u) => {
-      if (!u.last_login) return false;
-      return new Date(u.last_login) > new Date(Date.now() - 7 * 86400000);
+      if (!u.last_login_at) return false;
+      return new Date(u.last_login_at) > new Date(Date.now() - 7 * 86400000);
     }).length;
 
     const blockedUsers = allUsers.filter((u) => u.is_blocked).length;
@@ -753,7 +771,7 @@ export default function Dashboard() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">{order.package_name || order.provider_name || 'طلب'}</p>
-                      <p className="text-[11px] text-muted-foreground">{order.user_name || 'مستخدم'}</p>
+                      <p className="text-[11px] text-muted-foreground">{order.customer_input || order.provider_name || 'مستخدم'}</p>
                     </div>
                     <div className="text-left shrink-0">
                       <p className="text-xs font-bold text-foreground">{formatNumber(order.amount || 0)} {currencySymbols[order.currency || 'YER']}</p>
@@ -786,7 +804,7 @@ export default function Dashboard() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground">{activity.type === 'deposit' ? 'طلب إيداع' : 'طلب سحب'}</p>
-                        <p className="text-[11px] text-muted-foreground">{(item as any).user_name || 'مستخدم'} • {item.created_at ? timeAgo(item.created_at) : ''}</p>
+                        <p className="text-[11px] text-muted-foreground">{(item as any).sender_name || (item as any).bank_name || (item as any).customer_input || 'مستخدم'} • {item.created_at ? timeAgo(item.created_at) : ''}</p>
                       </div>
                       <div className="text-left shrink-0">
                         <p className="text-xs font-bold text-foreground">{formatNumber((item as any).amount || 0)} {currencySymbols[(item as any).currency || 'YER']}</p>

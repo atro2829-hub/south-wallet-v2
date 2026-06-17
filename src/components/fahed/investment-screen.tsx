@@ -45,12 +45,16 @@ interface ActiveInvestment {
 const typeLabels: Record<string, string> = { daily: 'يومي', weekly: 'أسبوعي', monthly: 'شهري', quarterly: 'ربع سنوي' };
 const planColors = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899'];
 
-function formatAmount(amount: number, currency: string): string {
-  if (currency === 'USD') {
-    if (amount < 0.01) return '0.00';
-    return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatAmount(amount: number | undefined | null, currency: string | undefined | null): string {
+  // Defensive — history rows that came from a misaligned db-compat query
+  // used to crash here with "Cannot read properties of undefined".
+  const safeAmount = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
+  const cur = currency || 'USD';
+  if (cur === 'USD') {
+    if (safeAmount < 0.01) return '0.00';
+    return safeAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
-  return amount.toLocaleString('en-US');
+  return safeAmount.toLocaleString('en-US');
 }
 
 // Countdown timer component
@@ -141,26 +145,71 @@ export default function InvestmentScreen() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch user investments from Firebase
+  // Fetch user investments directly from Supabase (the db-compat path
+  // `users/{uid}/investments` was silently returning the entire user row,
+  // which crashed `formatAmount(undefined)` when the history filter
+  // produced garbage "investments" from each user-column).
   useEffect(() => {
     if (!user?.id) return;
-    const investRef = ref(database, `users/${user.id}/investments`);
-    const listener = onValue(investRef, (snapshot) => {
-      setIsLoading(false);
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const allInvestments = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val })) as ActiveInvestment[];
-        const active = allInvestments.filter(inv => inv.status === 'active');
-        const history = allInvestments.filter(inv => inv.status !== 'active');
-        setActiveInvestments(active);
-        setInvestmentHistory(history);
-      } else {
+    let cancelled = false;
+    const loadInvestments = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        const { data, error } = await supabase
+          .from('investments')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+        if (error) {
+          console.warn('[investment-screen] supabase fetch error:', error.message);
+          setActiveInvestments([]);
+          setInvestmentHistory([]);
+          return;
+        }
+        if (cancelled) return;
+        const rows = (data || []).map(r => ({
+          id: r.id,
+          amount: Number(r.amount) || 0,
+          currency: r.currency || 'USD',
+          planName: r.plan_name || '',
+          dailyReturn: Number(r.daily_return) || 0,
+          totalReturn: Number(r.total_return) || 0,
+          status: r.status || 'active',
+          startsAt: r.starts_at,
+          endsAt: r.ends_at,
+          transactionId: r.transaction_id,
+          createdAt: r.created_at,
+        })) as ActiveInvestment[];
+        setActiveInvestments(rows.filter(inv => inv.status === 'active'));
+        setInvestmentHistory(rows.filter(inv => inv.status !== 'active'));
+      } catch (e) {
+        console.warn('[investment-screen] load error:', e);
         setActiveInvestments([]);
         setInvestmentHistory([]);
-        setIsLoading(false);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-    });
-    return () => off(investRef);
+    };
+    loadInvestments();
+
+    // Subscribe to realtime inserts/updates on the investments table for this user
+    let channel: any = null;
+    (async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        channel = supabase
+          .channel(`investments-${user.id}-${Date.now()}`)
+          .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'investments', filter: `user_id=eq.${user.id}` },
+            () => loadInvestments())
+          .subscribe();
+      } catch {}
+    })();
+
+    return () => {
+      cancelled = true;
+      try { channel && (async () => { const { supabase } = await import('@/lib/supabase'); supabase.removeChannel(channel); })(); } catch {}
+    };
   }, [user?.id]);
 
   // Check for completed investments

@@ -393,72 +393,84 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
       if (existingProvider) {
         serviceProviderId = existingProvider.id;
       } else {
-        // Create a new service_provider for this product
-        const sectionSlug = `g2bulk-${prod.category_id}`;
-        const { data: newProvider, error: createError } = await supabase
+        // Create a new service_provider for this product.
+        // Generate an explicit id (TEXT PRIMARY KEY, no default) so the insert
+        // doesn't fail with "null value in column id violates not-null constraint".
+        // Route the product into the "digital" section (الخدمات الرقمية) so it
+        // appears on the user's home screen under that section.
+        const newId = `g2bulk-prod-${provider.id}-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+        serviceProviderId = newId;
+        const { error: createError } = await supabase
           .from('service_providers')
-          .insert({
-            name: prod.category_title || prod.title,
-            name_en: prod.category_title || prod.title,
+          .upsert({
+            id: newId,
+            name: prod.title || prod.category_title || `منتج ${prod.id}`,
+            name_en: prod.title || prod.category_title || `Product ${prod.id}`,
             description: prod.description || '',
-            section_id: sectionSlug,
+            section_id: 'digital',           // "الخدمات الرقمية" — appears on user home
+            sub_section_id: null,
             api_product_id: String(prod.id),
             api_provider_id: provider.id,
+            icon: 'package',
+            color: '#8B5CF6',
             is_active: true,
             sort_order: prod.id,
             execution_type: 'api',
-          })
-          .select('id')
-          .single();
+          }, { onConflict: 'id' });
 
         if (createError) {
           console.error(`Error creating service_provider for product ${prod.id}:`, createError);
           continue;
         }
-        serviceProviderId = newProvider.id;
       }
 
-      // Upsert product_packages with USD pricing
+      // Upsert product_packages with USD pricing.
+      // Use a deterministic id so upserts across syncs hit the same row.
+      const pkgId = `g2bulk-pkg-${provider.id}-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
       const { error: pkgError } = await supabase
         .from('product_packages')
         .upsert({
+          id: pkgId,
           provider_id: serviceProviderId,
-          name: prod.title,
-          name_en: prod.title,
-          description: prod.description,
-          price_usd: prod.unit_price,
-          price_yer: 0, // USD only
-          price_sar: 0, // USD only
-          cost_price: prod.unit_price,
+          name: prod.title || `منتج ${prod.id}`,
+          name_en: prod.title || `Product ${prod.id}`,
+          description: prod.description || '',
+          price_usd: prod.unit_price || 0,
+          price_yer: 0,
+          price_sar: 0,
+          cost_price: prod.unit_price || 0,
           cost_currency: 'USD',
           execution_type: 'api',
           api_product_id: String(prod.id),
           is_active: true,
-        }, { onConflict: 'provider_id,api_product_id' });
+        }, { onConflict: 'id' });
 
       if (pkgError) {
         console.error(`Error syncing product package ${prod.id}:`, pkgError);
       }
 
-      // Also upsert to api_products table for direct API product queries
+      // Also upsert to api_products table (correct columns: name, price — not title/unit_price).
       const { error: apiProdError } = await supabase
         .from('api_products')
         .upsert({
           api_provider_id: provider.id,
           api_category_id: String(prod.category_id),
           api_product_id: String(prod.id),
-          title: prod.title,
+          name: prod.title || `Product ${prod.id}`,
+          name_en: prod.title || `Product ${prod.id}`,
           description: prod.description || '',
-          unit_price: prod.unit_price,
-          stock: prod.stock || 0,
+          price: prod.unit_price || 0,
+          currency: 'USD',
           image_url: prod.image_url || '',
           is_active: true,
           is_synced: true,
           last_synced_at: new Date().toISOString(),
+          provider_id: serviceProviderId,
+          package_id: pkgId,
+          product_data: prod,
         }, { onConflict: 'api_provider_id,api_product_id' });
 
       if (apiProdError) {
-        // api_products table may not exist yet - non-fatal
         console.warn(`Could not sync to api_products for product ${prod.id}:`, apiProdError.message);
       }
     } catch (err) {
