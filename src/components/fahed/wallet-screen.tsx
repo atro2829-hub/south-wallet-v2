@@ -141,18 +141,20 @@ export default function WalletScreen() {
   const { user, setUser, balanceVisible, toggleBalance, transactions, setTransactions, orders, setOrders, setActiveScreen, cardColors, setCardColors } = useAppStore();
   const [activeCardIndex, setActiveCardIndex] = useState(0);
 
-  // Build balanceCards from Firebase cardColors or defaults
+  // Build balanceCards from Firebase cardColors or defaults.
+  // Defensive: if cardColors[currency] is missing or its `primary` is undefined,
+  // fall back to the default color from defaultBalanceCards so the screen never crashes.
   const balanceCards: BalanceCard[] = defaultBalanceCards.map(card => {
-    const customColor = cardColors[card.currency];
-    if (customColor) {
+    const customColor = cardColors?.[card.currency];
+    if (customColor && typeof customColor.primary === 'string') {
       const r = parseInt(customColor.primary.slice(1, 3), 16);
       const g = parseInt(customColor.primary.slice(3, 5), 16);
       const b = parseInt(customColor.primary.slice(5, 7), 16);
       return {
         ...card,
         accentColor: customColor.primary,
-        accentColorEnd: customColor.gradient,
-        glowColor: `rgba(${r},${g},${b},0.35)`,
+        accentColorEnd: customColor.gradient || card.accentColorEnd,
+        glowColor: `rgba(${isNaN(r) ? 92 : r},${isNaN(g) ? 26 : g},${isNaN(b) ? 27 : b},0.35)`,
       };
     }
     return card;
@@ -164,11 +166,13 @@ export default function WalletScreen() {
     const unsubscribe = onValue(colorsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        setCardColors({
-          YER: data.YER || { primary: '#5C1A1B', gradient: '#3D0F10' },
-          SAR: data.SAR || { primary: '#059669', gradient: '#1B7A2B' },
-          USD: data.USD || { primary: '#2563EB', gradient: '#0D47A1' },
-        });
+        if (data && typeof data === 'object') {
+          setCardColors({
+            YER: { primary: '#5C1A1B', gradient: '#3D0F10', ...(data.YER || {}) },
+            SAR: { primary: '#059669', gradient: '#1B7A2B', ...(data.SAR || {}) },
+            USD: { primary: '#2563EB', gradient: '#0D47A1', ...(data.USD || {}) },
+          });
+        }
       }
     });
     return () => unsubscribe();

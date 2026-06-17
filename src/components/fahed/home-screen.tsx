@@ -261,11 +261,24 @@ export default function HomeScreen() {
   const { refreshAll } = useAdminSettings();
   const { refreshUser } = useSupabaseSync();
 
-  // Derive balance cards from Firebase card colors in the store
+  // Derive balance cards from Firebase card colors in the store.
+  // Defensive: fall back to defaults if any currency entry is missing — this prevents
+  // "Cannot read properties of undefined (reading 'primary')" if the backend ever
+  // returns a partial / empty cardColors payload.
+  const DEFAULT_CARD_COLORS = {
+    YER: { primary: '#5C1A1B', gradient: '#3D0F10' },
+    SAR: { primary: '#7D2D30', gradient: '#5C1A1B' },
+    USD: { primary: '#8B3A3D', gradient: '#6B2A2D' },
+  } as const;
+  const safeCardColors = {
+    YER: { ...DEFAULT_CARD_COLORS.YER, ...(cardColors?.YER || {}) },
+    SAR: { ...DEFAULT_CARD_COLORS.SAR, ...(cardColors?.SAR || {}) },
+    USD: { ...DEFAULT_CARD_COLORS.USD, ...(cardColors?.USD || {}) },
+  };
   const balanceCards: BalanceCard[] = [
-    { currency: 'YER', accentColor: cardColors.YER.primary, accentColorEnd: cardColors.YER.gradient, glowColor: `rgba(${hexToRgb(cardColors.YER.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
-    { currency: 'SAR', accentColor: cardColors.SAR.primary, accentColorEnd: cardColors.SAR.gradient, glowColor: `rgba(${hexToRgb(cardColors.SAR.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
-    { currency: 'USD', accentColor: cardColors.USD.primary, accentColorEnd: cardColors.USD.gradient, glowColor: `rgba(${hexToRgb(cardColors.USD.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
+    { currency: 'YER', accentColor: safeCardColors.YER.primary, accentColorEnd: safeCardColors.YER.gradient, glowColor: `rgba(${hexToRgb(safeCardColors.YER.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
+    { currency: 'SAR', accentColor: safeCardColors.SAR.primary, accentColorEnd: safeCardColors.SAR.gradient, glowColor: `rgba(${hexToRgb(safeCardColors.SAR.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
+    { currency: 'USD', accentColor: safeCardColors.USD.primary, accentColorEnd: safeCardColors.USD.gradient, glowColor: `rgba(${hexToRgb(safeCardColors.USD.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
   ];
 
   // Pull-to-refresh state

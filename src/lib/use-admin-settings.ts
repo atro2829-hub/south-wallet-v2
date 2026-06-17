@@ -54,6 +54,14 @@ export interface Section {
 
 // ─── Firebase path constants ───────────────────────────────────────────────
 
+// Fallback card colors — used when the backend returns a partial payload
+// so the UI never crashes with "Cannot read properties of undefined (reading 'primary')".
+const FALLBACK_CARD_COLORS = {
+  YER: { primary: '#5C1A1B', gradient: '#3D0F10' },
+  SAR: { primary: '#7D2D30', gradient: '#5C1A1B' },
+  USD: { primary: '#8B3A3D', gradient: '#6B2A2D' },
+} as const;
+
 const PATHS = {
   cardColors: 'adminSettings/cardColors',
   maintenance: 'adminSettings/maintenance',
@@ -154,8 +162,15 @@ export function useAdminSettings() {
     // 1. Card colors
     attachListener('cardColors', PATHS.cardColors, (snapshot) => {
       const data = snapshot.val();
-      if (data) {
-        store.setCardColors(data as CardColor);
+      if (data && typeof data === 'object') {
+        // Merge with current colors so partial payloads (e.g. only YER defined)
+        // never wipe out SAR/USD and trigger "Cannot read properties of undefined (reading 'primary')".
+        const current = useAppStore.getState().cardColors;
+        store.setCardColors({
+          YER: { ...FALLBACK_CARD_COLORS.YER, ...(current?.YER || {}), ...(data.YER || {}) },
+          SAR: { ...FALLBACK_CARD_COLORS.SAR, ...(current?.SAR || {}), ...(data.SAR || {}) },
+          USD: { ...FALLBACK_CARD_COLORS.USD, ...(current?.USD || {}), ...(data.USD || {}) },
+        });
       }
     });
 
@@ -424,7 +439,14 @@ export function useAdminSettings() {
       // 1. Card colors
       get(ref(database, PATHS.cardColors)).then((snap) => {
         const data = snap.val();
-        if (data) store.setCardColors(data as CardColor);
+        if (data && typeof data === 'object') {
+          const current = useAppStore.getState().cardColors;
+          store.setCardColors({
+            YER: { ...FALLBACK_CARD_COLORS.YER, ...(current?.YER || {}), ...(data.YER || {}) },
+            SAR: { ...FALLBACK_CARD_COLORS.SAR, ...(current?.SAR || {}), ...(data.SAR || {}) },
+            USD: { ...FALLBACK_CARD_COLORS.USD, ...(current?.USD || {}), ...(data.USD || {}) },
+          });
+        }
       }),
 
       // 2. Maintenance

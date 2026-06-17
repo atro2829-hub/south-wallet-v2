@@ -494,7 +494,7 @@ export default function ApiProvidersPanel() {
     try {
       const g2bulkData = {
         id: 'g2bulk', name: 'G2Bulk', baseUrl: 'https://api.g2bulk.com/v1/',
-        apiKey: 'process.env.NEXT_PUBLIC_G2BULK_API_KEY || ''',
+        apiKey: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '',
         authHeader: 'X-API-Key', isActive: true, syncEnabled: true,
         sectionId: 'service-providers', sectionName: 'خدمات المزودين', sectionIcon: 'globe',
         commission: 5, commissionType: 'percentage',
@@ -516,7 +516,7 @@ export default function ApiProvidersPanel() {
           description: 'G2Bulk API Provider',
           website: 'https://g2bulk.com',
           api_url: 'https://api.g2bulk.com/v1/',
-          api_key: 'process.env.NEXT_PUBLIC_G2BULK_API_KEY || ''',
+          api_key: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '',
           auth_header: 'X-API-Key',
           auth_type: 'header',
           is_active: true,

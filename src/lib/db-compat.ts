@@ -74,7 +74,7 @@ export type Unsubscribe = () => void;
 // Path parsing
 // ============================================================
 
-function parsePath(path: string): { table: string; filter?: { column: string; value: any }; id?: string; raw: string } {
+function parsePath(path: string): { table: string; filter?: { column: string; value: any }; id?: string; raw: string; extractValue?: boolean } {
   const clean = path.replace(/^\/+|\/+$/g, '');
   const parts = clean.split('/');
 
@@ -201,6 +201,13 @@ function parsePath(path: string): { table: string; filter?: { column: string; va
     return { table: 'maintenance', raw: path };
   }
   // app_config generic fallback for adminSettings/*
+  // adminSettings/{key} → read/write the JSONB `value` of a single app_config row keyed by `key`.
+  // This fixes the bug where the entire app_config table was returned as `{}` (rows have no `id` column),
+  // which overwrote defaults (e.g. cardColors) with empty objects and crashed the UI with
+  // "Cannot read properties of undefined (reading 'primary')".
+  if (parts[0] === 'adminSettings' && parts[1]) {
+    return { table: 'app_config', filter: { column: 'key', value: parts[1] }, raw: path, extractValue: true };
+  }
   if (parts[0] === 'adminSettings') {
     return { table: 'app_config', raw: path };
   }
@@ -278,6 +285,11 @@ export async function get(r: DatabaseReference | Query): Promise<DataSnapshot> {
     }
     // If we filtered by id, return single object. Otherwise return array.
     if (parsed.filter) {
+      // app_config rows are stored as { key, value, ... } — extract the JSONB `value`
+      // so callers receive the config payload directly (matching the old Firebase shape).
+      if (parsed.extractValue) {
+        return makeSnapshot(data ? (data as any).value : null, refObj.key, refObj);
+      }
       return makeSnapshot(data, refObj.key, refObj);
     }
     // For collection reads, return as object keyed by id (mimic Firebase)
@@ -304,6 +316,18 @@ export async function set(r: DatabaseReference, value: any): Promise<void> {
   }
 
   try {
+    // app_config rows are keyed by `key` and store the payload in the `value` JSONB column.
+    // Upsert so admins can both create and update a config row in one call.
+    if (parsed.extractValue && parsed.filter) {
+      const { error } = await supabase
+        .from(parsed.table)
+        .upsert(
+          { key: parsed.filter.value, value: value ?? {}, updated_at: new Date().toISOString() },
+          { onConflict: 'key' }
+        );
+      if (error) console.error('[db-compat] set/upsert error on', refObj.path, error);
+      return;
+    }
     if (parsed.filter) {
       // Update by id
       const updatePayload = typeof value === 'object' && value !== null
@@ -336,6 +360,17 @@ export async function update(r: DatabaseReference | { [path: string]: any }, val
       return;
     }
     try {
+      // For app_config, mirror set() semantics — upsert by `key` and store payload in `value`.
+      if (parsed.extractValue) {
+        const { error } = await supabase
+          .from(parsed.table)
+          .upsert(
+            { key: parsed.filter.value, value: value ?? {}, updated_at: new Date().toISOString() },
+            { onConflict: 'key' }
+          );
+        if (error) console.error('[db-compat] update/upsert error on', refObj.path, error);
+        return;
+      }
       const payload = { ...value, updated_at: new Date().toISOString() };
       const { error } = await supabase
         .from(parsed.table)
