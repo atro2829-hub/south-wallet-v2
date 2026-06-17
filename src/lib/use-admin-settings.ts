@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue, get, Unsubscribe } from '@/lib/db-compat';
 import {
   useAppStore,

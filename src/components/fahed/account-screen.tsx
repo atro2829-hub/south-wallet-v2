@@ -43,8 +43,9 @@ import {
   Star,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { database } from '@/lib/firebase';
-import { auth } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
+import { auth } from '@/lib/supabase-auth';
+;
 import { ref, get, onValue, update } from '@/lib/db-compat';
 import { sendPasswordResetEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from '@/lib/supabase-auth';
 import { LOGO_BASE64 } from '@/lib/logo';

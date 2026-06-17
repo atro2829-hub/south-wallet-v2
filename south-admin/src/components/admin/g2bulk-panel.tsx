@@ -45,7 +45,7 @@ import {
   type G2BulkProduct,
 } from '@/lib/g2bulk';
 import { onValue, ref } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 export default function G2BulkPanel() {
   const [apiKey, setApiKey] = useState('');

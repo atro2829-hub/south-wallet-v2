@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, HelpCircle, Shield, Info, ChevronDown, ChevronUp, ChevronLeft, Users, Eye, Target, Phone, Mail, Globe, Heart, Star, MessageSquare } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { LOGO_BASE64 } from '@/lib/logo';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue } from '@/lib/db-compat';
 
 type LegalTab = 'faq' | 'privacy' | 'about';

@@ -4,7 +4,7 @@
  */
 
 import { ref, push, set, get, query, orderByChild, limitToLast, startAt, endAt } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 // Predefined action types
 export enum AuditAction {

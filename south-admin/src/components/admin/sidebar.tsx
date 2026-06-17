@@ -44,7 +44,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { signOut } from '@/lib/supabase-auth';
-import { auth } from '@/lib/firebase';
+import { auth } from '@/lib/supabase-auth';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Badge } from '@/components/ui/badge';
 import { useTheme } from 'next-themes';

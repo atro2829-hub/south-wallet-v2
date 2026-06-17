@@ -1,9 +1,8 @@
 // G2Bulk API Service for Admin App
 // Manages G2Bulk API settings, syncs categories/products
-// Uses Firebase for settings (backward compatible) and Supabase for synced data
+// Uses Supabase for ALL data (no Firebase for data operations).
 
-import { get, ref, update, set } from '@/lib/db-compat';
-import { database } from './firebase';
+import { get, ref, update, set, database } from '@/lib/db-compat';
 import { supabase } from './supabase';
 
 const G2BULK_BASE_URL = 'https://api.g2bulk.com/v1';

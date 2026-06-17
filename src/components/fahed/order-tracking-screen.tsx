@@ -24,7 +24,7 @@ import {
 import { useAppStore, type Order } from '@/lib/store';
 import { formatNumber, currencySymbols, currencyBadgeColors, transactionTypeLabels } from '@/lib/utils';
 import { ref, onValue, update, set } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { generateReference } from '@/lib/utils';
 
 // Order timeline steps

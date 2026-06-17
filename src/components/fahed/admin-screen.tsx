@@ -18,7 +18,7 @@ import {
 import { useAppStore, type ServiceProvider, type ProductPackage, type Order } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, currencyNames, generateReference, formatNumber, timeAgo, compressBase64Image, defaultExchangeRates } from '@/lib/utils';
 import { ref, set, get, update, remove, push, onValue } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { LOGO_BASE64 } from '@/lib/logo';
 
 type AdminTab = 'overview' | 'orders' | 'users' | 'deposit' | 'withdraw' | 'kyc' | 'banks' | 'exchangeRates' | 'instantRecharge' | 'entertainment' | 'providers' | 'codes' | 'giftCodes' | 'banners' | 'socialLinks' | 'legalContent' | 'settings';

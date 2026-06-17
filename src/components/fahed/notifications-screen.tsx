@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { timeAgo } from '@/lib/utils';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue } from '@/lib/db-compat';
 import {
   handleNotificationTap,

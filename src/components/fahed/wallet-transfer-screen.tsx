@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { formatNumber, currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, set, get, runTransaction } from '@/lib/db-compat';
 import YemeniPhoneInput from '@/components/fahed/yemeni-phone-input';
 

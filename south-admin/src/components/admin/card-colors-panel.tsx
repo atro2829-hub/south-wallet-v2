@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ref, onValue, set, get } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

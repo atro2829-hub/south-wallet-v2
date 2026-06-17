@@ -1,4 +1,4 @@
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, set, update, get } from '@/lib/db-compat';
 import { sendFCMDirect } from '@/lib/fcm-sender';
 

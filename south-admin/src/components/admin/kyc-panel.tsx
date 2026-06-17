@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { ref, update, push } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, generateId, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';

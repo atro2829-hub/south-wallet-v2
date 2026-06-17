@@ -258,6 +258,47 @@ function makeRef(path: string): DatabaseReference {
 // ref, get, set, update, push, remove
 // ============================================================
 
+/**
+ * `database` is a marker object — it exists ONLY so that legacy code
+ * which does `ref(database, 'users/123')` compiles. The actual data
+ * operations all go through Supabase; the first argument to `ref()`
+ * is ignored. This is the single source of truth for the marker.
+ *
+ * Previously this was exported from `@/lib/firebase`, which made it
+ * look like Firebase was still handling data. It is now exported from
+ * here (`@/lib/db-compat`) to make the Supabase-only architecture clear.
+ */
+export const database = { __compat: true } as unknown;
+
+/**
+ * `storage` — a proxy that forwards to Supabase Storage. Exported from
+ * here (not firebase.ts) so it's clear Storage is Supabase-backed.
+ */
+export const storage = {
+  refFromURL: (url: string) => ({ getDownloadURL: async () => url, delete: async () => {} }),
+  ref: (path: string) => ({
+    put: async (data: Blob | Uint8Array | ArrayBuffer) => {
+      const [bucket, ...rest] = path.split('/').filter(Boolean);
+      const filePath = rest.join('/');
+      const { error } = await supabase.storage.from(bucket || 'avatars').upload(filePath, data, { upsert: true });
+      if (error) throw error;
+      const { data: pub } = supabase.storage.from(bucket || 'avatars').getPublicUrl(filePath);
+      return { ref: { getDownloadURL: async () => pub.publicUrl } };
+    },
+    getDownloadURL: async () => {
+      const [bucket, ...rest] = path.split('/').filter(Boolean);
+      const filePath = rest.join('/');
+      const { data } = supabase.storage.from(bucket || 'avatars').getPublicUrl(filePath);
+      return data.publicUrl;
+    },
+    delete: async () => {
+      const [bucket, ...rest] = path.split('/').filter(Boolean);
+      const filePath = rest.join('/');
+      await supabase.storage.from(bucket || 'avatars').remove([filePath]);
+    },
+  }),
+};
+
 export function ref(_db: unknown, path: string): DatabaseReference {
   return makeRef(path);
 }

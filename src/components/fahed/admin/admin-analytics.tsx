@@ -9,7 +9,7 @@ import {
 import { useAdminContext } from './admin-context';
 import { formatNumber, currencySymbols } from '@/lib/utils';
 import { ref, get } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 export default function AdminAnalytics() {
   const { isDark, cardStyle, allOrders, firebaseUsers, providers, statsData } = useAdminContext();

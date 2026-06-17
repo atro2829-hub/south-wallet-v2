@@ -11,7 +11,7 @@
  * - Stores metrics to Firebase at monitoring/{date}/
  */
 
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, push, set } from '@/lib/db-compat';
 
 // ─── Types ───

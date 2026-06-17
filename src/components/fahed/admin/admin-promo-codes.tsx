@@ -7,7 +7,7 @@ import { useAdminContext } from './admin-context';
 import { currencySymbols, generateReference } from '@/lib/utils';
 import type { PromoCodeData } from './admin-types';
 import { ref, set, remove } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 export default function AdminPromoCodes() {
   const {

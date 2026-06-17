@@ -14,7 +14,7 @@
  *   adminSettings/featureFlags/ - Feature toggles
  */
 
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue, get } from '@/lib/db-compat';
 
 // ─── Types ─────────────────────────────────────────────────────────────

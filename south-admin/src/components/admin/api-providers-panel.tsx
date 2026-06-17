@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { ref, onValue, update, remove, set, push } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, cn } from '@/lib/utils';

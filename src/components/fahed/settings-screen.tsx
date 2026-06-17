@@ -39,7 +39,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, get } from '@/lib/db-compat';
 import {
   isBiometricAvailable,

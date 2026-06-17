@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue } from '@/lib/db-compat';
 import { useAppStore, defaultOwnerSettings } from '@/lib/store';
 import type { OwnerSettings } from '@/lib/store';

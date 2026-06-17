@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, get, onValue, query, orderByChild, equalTo, limitToLast } from '@/lib/db-compat';
 import { useAppStore } from '@/lib/store';
 import type { ServiceProvider, ProductPackage, ServiceCategory } from '@/lib/store';

@@ -10,7 +10,7 @@ import {
 import { useAppStore, type PromoCode, type GiftCode } from '@/lib/store';
 import { currencySymbols, currencyNames, currencyBadgeColors, timeAgo } from '@/lib/utils';
 import { ref, onValue, get, update, runTransaction } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 export default function PromoScreen() {
   const { theme } = useTheme();

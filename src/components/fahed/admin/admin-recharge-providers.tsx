@@ -10,7 +10,7 @@ import {
 import { useAdminContext } from './admin-context';
 import { currencySymbols, generateReference } from '@/lib/utils';
 import { ref, set, get, update, remove, onValue } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import type { ServiceProvider } from '@/lib/store';
 
 interface SubSection {

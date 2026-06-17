@@ -5,7 +5,7 @@
  */
 
 import { ref, push, set, get, update, remove } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { currencySymbols } from '@/lib/utils';
 
 // Email template types

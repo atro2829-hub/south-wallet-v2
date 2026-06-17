@@ -10,7 +10,7 @@ import {
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, currencyNames, currencyBadgeColors, timeAgo } from '@/lib/utils';
 import { ref, get, set as firebaseSet, update, onValue, off, runTransaction } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 interface UserGiftCode {
   id: string;

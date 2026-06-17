@@ -21,7 +21,7 @@ import { governorates, compressBase64Image } from '@/lib/utils';
 import { LOGO_BASE64 } from '@/lib/logo';
 import { useToast } from '@/components/fahed/toast-provider';
 import { ref, update } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 // Yemen flag indicator
 function YemenFlagIndicator() {

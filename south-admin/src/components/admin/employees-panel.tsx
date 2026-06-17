@@ -16,7 +16,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, get, set, update, remove, onValue, push } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ref, push, set } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useStore } from '@/lib/store';
 import { formatBalance, currencyNames } from '@/lib/utils';
 import { ArrowRight, ArrowUpFromLine, CheckCircle } from 'lucide-react';

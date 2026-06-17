@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ref, get, update } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';

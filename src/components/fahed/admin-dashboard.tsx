@@ -20,7 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue } from '@/lib/db-compat';
 import { formatNumber } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';

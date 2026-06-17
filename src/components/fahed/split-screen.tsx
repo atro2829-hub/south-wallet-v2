@@ -22,7 +22,7 @@ import { useAppStore } from '@/lib/store';
 import { currencySymbols, currencyNames, currencyBadgeColors, generateReference } from '@/lib/utils';
 import { useToast } from '@/components/fahed/toast-provider';
 import { ref, set } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 type Currency = 'YER' | 'SAR' | 'USD';
 

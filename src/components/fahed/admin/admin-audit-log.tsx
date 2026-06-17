@@ -7,7 +7,7 @@ import { useAdminContext } from './admin-context';
 import { auditActionLabels, auditActionColors, AuditAction, fetchAuditLog, type AuditLogEntry } from '@/lib/audit-log';
 import { timeAgo, formatNumber } from '@/lib/utils';
 import { onValue, ref } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { exportToCSV } from '@/lib/export-reports';
 
 export default function AdminAuditLog() {

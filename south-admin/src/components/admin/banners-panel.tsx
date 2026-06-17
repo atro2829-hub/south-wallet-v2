@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, startTransition } from 'react';
 import { supabase, DbBanner } from '@/lib/supabase';
-import { storage } from '@/lib/firebase';
+import { storage } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, cn } from '@/lib/utils';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from '@/lib/supabase';

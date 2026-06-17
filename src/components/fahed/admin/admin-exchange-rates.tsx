@@ -5,7 +5,7 @@ import { RefreshCw, ArrowLeftRight, Save, CheckCircle2, Eye, Percent, Zap } from
 import { useAdminContext } from './admin-context';
 import { currencySymbols, currencyBadgeColors, formatNumber } from '@/lib/utils';
 import { set, ref } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 
 export default function AdminExchangeRates() {
   const {

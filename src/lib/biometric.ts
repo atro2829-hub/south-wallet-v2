@@ -8,7 +8,7 @@
  * Preferences are stored in both localStorage AND Firebase.
  */
 
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, get, update } from '@/lib/db-compat';
 
 // ── Platform Detection ──────────────────────────────────────────────

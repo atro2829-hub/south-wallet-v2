@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from '@/lib/supabase-auth';
 import { ref, get, onValue } from '@/lib/db-compat';
-import { auth, database } from '@/lib/firebase';
+import { auth } from '@/lib/supabase-auth';
+import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import LoginScreen from '@/components/admin/login-screen';
 import Sidebar from '@/components/admin/sidebar';

@@ -19,7 +19,7 @@ import {
 import { useAppStore, type ServiceProvider, type ProductPackage, type Order } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
 import { ref, push, set, get, update, runTransaction } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useToast } from '@/components/fahed/toast-provider';
 // Products are now loaded from Supabase via store
 import { executeApiOrder, type ApiProviderConfig } from '@/lib/api-provider';

@@ -30,7 +30,7 @@ import { useAppStore } from '@/lib/store';
 import type { CardColor } from '@/lib/store';
 import { formatBalance, formatNumber, currencySymbols, currencyNames, currencyBadgeColors, timeAgo, transactionTypeLabels, transactionTypeColors } from '@/lib/utils';
 import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, get, onValue } from '@/lib/db-compat';
 import { supabase } from '@/lib/supabase';
 import { fetchBannersForPosition, type Banner } from '@/components/fahed/home-screen';

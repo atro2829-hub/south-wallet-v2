@@ -25,7 +25,7 @@ import {
 import { useAppStore, type Order } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
 import { ref, set, update } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useToast } from '@/components/fahed/toast-provider';
 import { serviceIcons } from '@/lib/service-icons';
 import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';

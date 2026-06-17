@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, formatNumber, formatBalance, generateReference } from '@/lib/utils';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, set, get, update, onValue, off, runTransaction } from '@/lib/db-compat';
 import {
   getOrCreateEscrowChat,

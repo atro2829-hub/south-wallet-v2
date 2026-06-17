@@ -10,7 +10,7 @@ import {
 import { useAdminContext } from './admin-context';
 import { currencyBadgeColors, currencyNames, timeAgo, formatNumber } from '@/lib/utils';
 import { getRoleDisplayInfo, adminRoles, type UserRole } from '@/lib/permissions';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, update, get, onValue } from '@/lib/db-compat';
 import { fetchEmailQueue, type EmailQueueEntry, emailTypeLabels, deleteEmailFromQueue, markEmailSent } from '@/lib/email-notifications';
 

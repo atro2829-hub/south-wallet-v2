@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { ref, update, push, get } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId, cn, formatDateAr, timeAgo } from '@/lib/utils';
 import { notifyWithdrawStatus } from '@/lib/notifications';

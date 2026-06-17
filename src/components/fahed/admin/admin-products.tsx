@@ -6,7 +6,7 @@ import { Plus, Search, Edit3, Save, X, ToggleLeft, ToggleRight, Trash2, Package,
 import { useAdminContext } from './admin-context';
 import { currencySymbols } from '@/lib/utils';
 import { ref, update, set } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { generateReference } from '@/lib/utils';
 
 export default function AdminProducts() {

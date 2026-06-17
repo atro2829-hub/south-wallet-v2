@@ -4,8 +4,7 @@
  * and updates Firebase Realtime Database
  */
 
-import { get, update, ref, set } from '@/lib/db-compat';
-import { database } from './firebase';
+import { get, update, ref, set, database } from '@/lib/db-compat';
 
 const EXCHANGE_RATE_API_BASE = 'https://cygrlhmnmckoefefnsjc.supabase.co/functions/v1/public-api/latest';
 

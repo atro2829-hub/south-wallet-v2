@@ -21,7 +21,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, set, onValue } from '@/lib/db-compat';
 import { generateReference, timeAgo } from '@/lib/utils';
 import IPhoneDivider from '@/components/fahed/iphone-divider';

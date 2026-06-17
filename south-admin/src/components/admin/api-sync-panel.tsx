@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAdminStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
-import { database } from '@/lib/firebase';
+import { database } from '@/lib/db-compat';
 import { ref, onValue, get } from '@/lib/db-compat';
 import {
   RefreshCw,
