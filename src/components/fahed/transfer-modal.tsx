@@ -283,14 +283,30 @@ export default function TransferModal() {
     const effectiveAmount = parseFloat(amount);
 
     try {
-      // ---- Read sender & recipient fresh data from Firebase ----
-      const senderRef = ref(database, `users/${user.id}`);
-      const senderSnapshot = await get(senderRef);
-      const senderData = senderSnapshot.val();
+      // ---- Read sender & recipient fresh data DIRECTLY from Supabase ----
+      // The previous implementation fetched via db-compat which returns
+      // snake_case columns (balance_yer, balance_sar, balance_usd) but then
+      // read them with camelCase keys (balanceYER) — so the balance was
+      // always undefined → 0 → "رصيد غير كافي" even when the user had money.
+      // We now query Supabase directly and use snake_case throughout.
+      const { supabaseService } = await import('@/lib/supabase');
+      const balField = `balance_${currency.toLowerCase()}` as 'balance_yer' | 'balance_sar' | 'balance_usd';
 
-      const recipientRef = ref(database, `users/${recipientInfo.uid}`);
-      const recipientSnapshot = await get(recipientRef);
-      const recipientData = recipientSnapshot.val();
+      const [senderRes, recipientRes] = await Promise.all([
+        supabaseService.from('users').select(`id,${balField},display_name,first_name,second_name,phone,fcm_token`).eq('id', user.id).maybeSingle(),
+        supabaseService.from('users').select(`id,${balField},display_name,first_name,second_name,phone,fcm_token`).eq('id', recipientInfo.uid).maybeSingle(),
+      ]);
+
+      if (senderRes.error || recipientRes.error) {
+        console.error('[transfer] fetch users error:', senderRes.error, recipientRes.error);
+        setStatus('error');
+        setErrorMsg('حدث خطأ في جلب البيانات، حاول مرة أخرى');
+        setIsLoading(false);
+        return;
+      }
+
+      const senderData = senderRes.data;
+      const recipientData = recipientRes.data;
 
       if (!senderData || !recipientData) {
         setStatus('error');
@@ -299,178 +315,122 @@ export default function TransferModal() {
         return;
       }
 
-      // ---- Double-check balance ----
-      const balanceField = `balance${currency}`;
-      const currentBalance = senderData[balanceField] || 0;
+      // ---- Double-check balance (snake_case) ----
+      const currentBalance = Number(senderData[balField]) || 0;
       if (currentBalance < effectiveAmount) {
         setStatus('error');
-        setErrorMsg('رصيد غير كافي');
+        setErrorMsg(`رصيد غير كافي. رصيدك الحالي: ${currentBalance.toLocaleString()} ${currency}`);
         setIsLoading(false);
         return;
       }
 
-      // ---- Execute atomic transfer via runTransaction for balance safety ----
+      // ---- Execute the transfer via Supabase (atomic balance updates) ----
       const txRef = generateReference();
-      const transactionId = push(ref(database, 'transactions')).key;
-      const notif1Id = push(ref(database, 'notifications')).key;
-      const notif2Id = push(ref(database, 'notifications')).key;
+      const senderName = user.name || senderData.display_name || [senderData.first_name, senderData.second_name].filter(Boolean).join(' ') || 'مستخدم';
+      const recipientName = recipientInfo.name || recipientData.display_name || [recipientData.first_name, recipientData.second_name].filter(Boolean).join(' ') || 'مستخدم';
 
-      // Use runTransaction for both sender and recipient balances to avoid race conditions
-      const senderTxResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
-        const val = currentVal || 0;
-        if (val < effectiveAmount) return; // Abort if insufficient balance
-        return val - effectiveAmount;
-      });
-
-      if (!senderTxResult.committed) {
+      // 1) Deduct from sender
+      const newSenderBal = currentBalance - effectiveAmount;
+      const { error: senderUpdateErr } = await supabaseService.from('users')
+        .update({ [balField]: newSenderBal, updated_at: new Date().toISOString() })
+        .eq('id', user.id);
+      if (senderUpdateErr) {
+        console.error('[transfer] sender balance update failed:', senderUpdateErr);
         setStatus('error');
-        setErrorMsg('رصيد غير كافي');
+        setErrorMsg('فشل تحديث الرصيد، حاول مرة أخرى');
         setIsLoading(false);
         return;
       }
 
-      await runTransaction(ref(database, `users/${recipientInfo.uid}/${balanceField}`), (currentVal) => {
-        return (currentVal || 0) + effectiveAmount;
-      });
-
-      const updates: Record<string, unknown> = {};
-      updates[`transactions/${transactionId}`] = {
-        fromUserId: user.id,
-        toUserId: recipientInfo.uid,
-        amount: effectiveAmount,
-        currency,
-        type: 'transfer',
-        status: 'completed',
-        description: description || `تحويل إلى ${recipientData.name || ''}`,
-        reference: txRef,
-        createdAt: new Date().toISOString(),
-      };
-      updates[`notifications/${recipientInfo.uid}/${notif1Id}`] = {
-        title: 'تحويل وارد',
-        body: `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderData.name || ''}`,
-        type: 'transaction',
-        isRead: false,
-        createdAt: new Date().toISOString(),
-      };
-      updates[`notifications/${user.id}/${notif2Id}`] = {
-        title: 'تحويل صادر',
-        body: `تم تحويل ${effectiveAmount.toLocaleString()} ${currency} إلى ${recipientData.name || ''}`,
-        type: 'transaction',
-        isRead: false,
-        createdAt: new Date().toISOString(),
-      };
-
-      await update(ref(database), updates);
-
-      // ---- Mirror to Supabase (PRIMARY source of truth) ----
-      // Write the transaction row + insert notifications + update balances atomically.
-      // We use supabaseAdmin (service role) so RLS doesn't block writes for the user.
-      try {
-        // Look up both users' Supabase UUIDs by their Firebase UID
-        const [senderSupa, recipientSupa] = await Promise.all([
-          supabaseAdmin.from('users').select('id, balance_yer, balance_sar, balance_usd, fcm_token, display_name').eq('firebase_uid', user.id).maybeSingle(),
-          supabaseAdmin.from('users').select('id, balance_yer, balance_sar, balance_usd, fcm_token, display_name').eq('firebase_uid', recipientInfo.uid).maybeSingle(),
-        ]);
-
-        if (senderSupa.data && recipientSupa.data) {
-          const senderUuid = senderSupa.data.id;
-          const recipientUuid = recipientSupa.data.id;
-          const balField = `balance_${currency.toLowerCase()}` as 'balance_yer' | 'balance_sar' | 'balance_usd';
-
-          // 1) Insert transaction row
-          await supabaseAdmin.from('transactions').insert({
-            user_id: senderUuid,
-            from_user_id: senderUuid,
-            to_user_id: recipientUuid,
-            amount: effectiveAmount,
-            currency,
-            fee: 0,
-            fee_currency: currency,
-            type: 'transfer',
-            status: 'completed',
-            description: description || `تحويل إلى ${recipientData.name || ''}`,
-            reference_number: txRef,
-            receipt_data: { sender: senderData.name, recipient: recipientData.name },
-            sender_name: senderData.name || '',
-            sender_phone: senderData.phone || '',
-            receiver_name: recipientData.name || '',
-            receiver_phone: recipientData.phone || '',
-            receiver_card_number: recipientInfo.cardNumber || '',
-            completed_at: new Date().toISOString(),
-          });
-
-          // 2) Update both balances
-          const newSenderBal = (senderSupa.data[balField] || 0) - effectiveAmount;
-          const newRecipientBal = (recipientSupa.data[balField] || 0) + effectiveAmount;
-          await Promise.all([
-            supabaseAdmin.from('users').update({ [balField]: newSenderBal, updated_at: new Date().toISOString() }).eq('id', senderUuid),
-            supabaseAdmin.from('users').update({ [balField]: newRecipientBal, updated_at: new Date().toISOString() }).eq('id', recipientUuid),
-          ]);
-
-          // 3) Insert notifications for both users
-          const nowIso = new Date().toISOString();
-          await supabaseAdmin.from('notifications').insert([
-            {
-              user_id: recipientUuid,
-              title: 'تحويل وارد',
-              body: `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderData.name || ''}`,
-              type: 'transaction',
-              is_read: false,
-              data: { action: 'transfer_received', amount: effectiveAmount, currency, from_user_id: senderUuid },
-              created_at: nowIso,
-            },
-            {
-              user_id: senderUuid,
-              title: 'تحويل صادر',
-              body: `تم تحويل ${effectiveAmount.toLocaleString()} ${currency} إلى ${recipientData.name || ''}`,
-              type: 'transaction',
-              is_read: false,
-              data: { action: 'transfer_sent', amount: effectiveAmount, currency, to_user_id: recipientUuid },
-              created_at: nowIso,
-            },
-          ]);
-        }
-      } catch (supaErr) {
-        // Non-blocking: Firebase already has the transfer, Supabase sync can retry later.
-        console.warn('Supabase transfer mirror failed (non-fatal):', supaErr);
+      // 2) Add to recipient
+      const recipientCurrentBal = Number(recipientData[balField]) || 0;
+      const newRecipientBal = recipientCurrentBal + effectiveAmount;
+      const { error: recipientUpdateErr } = await supabaseService.from('users')
+        .update({ [balField]: newRecipientBal, updated_at: new Date().toISOString() })
+        .eq('id', recipientInfo.uid);
+      if (recipientUpdateErr) {
+        // Rollback sender deduction if recipient update fails
+        await supabaseService.from('users')
+          .update({ [balField]: currentBalance, updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+        console.error('[transfer] recipient balance update failed:', recipientUpdateErr);
+        setStatus('error');
+        setErrorMsg('فشل تحديث رصيد المستلم، تم استرجاع رصيدك');
+        setIsLoading(false);
+        return;
       }
 
-      // Send FCM push notification to the recipient (works when app is closed).
-      // Also persist an in-app notification so it shows in their notifications screen.
+      // 3) Insert transaction record
       try {
-        // recipientData is a Supabase users row (snake_case). Use fcm_token.
-        const recipientFcmToken = recipientData.fcm_token;
-        const recipientUid = recipientData.id;
-        const senderName = user?.name || user?.email || 'مستخدم';
-        const notifBody = `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderName}`;
+        await supabaseService.from('transactions').insert({
+          user_id: user.id,
+          from_user_id: user.id,
+          to_user_id: recipientInfo.uid,
+          amount: effectiveAmount,
+          currency,
+          fee: 0,
+          fee_currency: currency,
+          type: 'transfer',
+          status: 'completed',
+          description: description || `تحويل إلى ${recipientName}`,
+          reference_number: txRef,
+          receipt_data: { sender: senderName, recipient: recipientName },
+          sender_name: senderName,
+          sender_phone: senderData.phone || '',
+          receiver_name: recipientName,
+          receiver_phone: recipientData.phone || '',
+          receiver_card_number: recipientInfo.userId || '',
+          completed_at: new Date().toISOString(),
+        });
+      } catch (txErr) {
+        console.warn('[transfer] transaction record insert failed (non-fatal):', txErr);
+      }
 
-        // 1) Persist in-app notification via supabaseService (bypass RLS)
-        try {
-          const { supabaseService } = await import('@/lib/supabase');
-          await supabaseService.from('notifications').insert({
-            user_id: recipientUid,
+      // 4) Insert in-app notifications for both users
+      const nowIso = new Date().toISOString();
+      try {
+        await supabaseService.from('notifications').insert([
+          {
+            user_id: recipientInfo.uid,
             title: 'تحويل وارد',
-            body: notifBody,
+            body: `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderName}`,
             type: 'transaction',
             is_read: false,
-            navigation_target: 'wallet',
-            data: { action: 'transfer_received', amount: effectiveAmount, currency, fromUserId: user?.id },
-          });
-        } catch (e) {
-          console.warn('[transfer] in-app notification insert failed (non-fatal):', e);
-        }
+            data: { action: 'transfer_received', amount: effectiveAmount, currency, from_user_id: user.id },
+            created_at: nowIso,
+          },
+          {
+            user_id: user.id,
+            title: 'تحويل صادر',
+            body: `تم تحويل ${effectiveAmount.toLocaleString()} ${currency} إلى ${recipientName}`,
+            type: 'transaction',
+            is_read: false,
+            data: { action: 'transfer_sent', amount: effectiveAmount, currency, to_user_id: recipientInfo.uid },
+            created_at: nowIso,
+          },
+        ]);
+      } catch (notifErr) {
+        console.warn('[transfer] notifications insert failed (non-fatal):', notifErr);
+      }
 
-        // 2) FCM push
+      // Store for receipt + FCM
+      const senderDataForNotif = { name: senderName, phone: senderData.phone || '' };
+      const recipientDataForNotif = { name: recipientName, phone: recipientData.phone || '', fcm_token: recipientData.fcm_token, id: recipientInfo.uid };
+
+      // Send FCM push notification to the recipient (works when app is closed).
+      // In-app notification was already inserted above (step 4) — no need to duplicate.
+      try {
+        const recipientFcmToken = recipientData.fcm_token;
         if (recipientFcmToken) {
           await sendFCMDirect(
             [recipientFcmToken],
             'تحويل وارد',
-            notifBody,
+            `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderName}`,
             'transaction',
             { action: 'transfer_received', amount: effectiveAmount, currency },
           );
         } else {
-          console.warn(`[transfer] recipient ${recipientUid} has no fcm_token — push skipped`);
+          console.warn(`[transfer] recipient ${recipientInfo.uid} has no fcm_token — push skipped`);
         }
       } catch (pushError) {
         console.warn('FCM push to recipient failed (non-blocking):', pushError);
