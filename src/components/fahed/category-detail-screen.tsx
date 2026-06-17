@@ -424,15 +424,34 @@ export default function CategoryDetailScreen() {
           setSupabaseApiCategories(catData || []);
         }
 
-        // Fetch products for this provider
+        // Fetch products for this provider. Join with product_packages to get
+        // the markup-included price (price_usd). Without this join, the UI
+        // would show the raw cost (no markup) and the user would be undercharged.
         const { data: prodData, error: prodError } = await supabase
           .from('api_products')
-          .select('*')
+          .select(`
+            *,
+            package:package_id (
+              id,
+              price_usd,
+              cost_price,
+              commission_amount,
+              is_active
+            )
+          `)
           .eq('api_provider_id', sectionApiProviderId)
           .eq('is_active', true);
 
         if (!cancelled && !prodError) {
-          setSupabaseApiProducts(prodData || []);
+          // Flatten the joined package price into final_price_usd for easy access
+          const enriched = (prodData || []).map((p: any) => ({
+            ...p,
+            final_price_usd: p.package?.price_usd || p.price || 0,
+            cost_price: p.package?.cost_price || p.price || 0,
+            commission_amount: p.package?.commission_amount || 0,
+            stock: p.product_data?.stock || 0,
+          }));
+          setSupabaseApiProducts(enriched);
         }
       } catch (error) {
         console.error('Error fetching API products from Supabase:', error);
@@ -1173,7 +1192,8 @@ export default function CategoryDetailScreen() {
                 </div>
               ) : supabaseApiProducts.length > 0 ? (
                 <>
-                  {/* Category tabs if multiple categories exist */}
+                  {/* Category tabs if multiple categories exist.
+                      Each category chip shows its image (from G2Bulk) if available. */}
                   {supabaseApiCategories.length > 1 && (
                     <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
                       <button
@@ -1186,16 +1206,21 @@ export default function CategoryDetailScreen() {
                       >
                         الكل
                       </button>
-                      {supabaseApiCategories.filter(c => !c.api_category_id?.startsWith('game_')).map((cat) => (
+                      {supabaseApiCategories
+                        .filter(c => c.product_count > 0) // only show categories that have products
+                        .map((cat) => (
                         <button
                           key={cat.api_category_id}
                           onClick={() => setApiCategoryFilter(cat.api_category_id)}
-                          className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95"
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95"
                           style={{
                             background: apiCategoryFilter === cat.api_category_id ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
                             color: apiCategoryFilter === cat.api_category_id ? '#FFFFFF' : secondaryTextColor,
                           }}
                         >
+                          {cat.image_url && (
+                            <img src={cat.image_url} alt="" className="w-4 h-4 rounded-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                          )}
                           {cat.title}
                         </button>
                       ))}
@@ -1207,8 +1232,12 @@ export default function CategoryDetailScreen() {
                         ? supabaseApiProducts.filter(p => String(p.api_category_id) === String(apiCategoryFilter))
                         : supabaseApiProducts
                       ).map((product, pIndex) => {
-                        const rawPrice = product.unit_price || 0;
-                        const markedUpPrice = rawPrice * 1.16; // 16% markup
+                        // The sync already stored the markup-included price in
+                        // product_packages.price_usd. api_products.price holds
+                        // the raw cost (no markup). We use the package price if
+                        // available, otherwise fall back to cost + 16%.
+                        const rawPrice = Number(product.price) || Number(product.unit_price) || 0;
+                        const finalPrice = Number(product.final_price_usd) || rawPrice;
                         return (
                           <motion.button
                             key={product.id || product.api_product_id}
@@ -1218,10 +1247,11 @@ export default function CategoryDetailScreen() {
                             onClick={() => {
                               setSelectedApiProduct({
                                 id: product.api_product_id || product.id,
-                                title: product.title || '',
-                                unit_price: markedUpPrice,
+                                title: product.name || product.title || '',
+                                unit_price: finalPrice,
                                 stock: product.stock || 0,
                                 icon: product.image_url || '',
+                                image_url: product.image_url || '',
                                 description: product.description || '',
                                 category_id: product.api_category_id,
                                 isActive: true,
@@ -1232,18 +1262,18 @@ export default function CategoryDetailScreen() {
                             className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-xl transition-colors text-right"
                             style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
                           >
-                            <div className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                            <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
                               {product.image_url ? (
-                                <img src={product.image_url} alt="" className="w-9 h-9 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                <img src={product.image_url} alt="" className="w-11 h-11 object-contain" onError={(e) => { const t = e.target as HTMLImageElement; t.style.display = 'none'; }} />
                               ) : (
-                                <Package size={20} color={isDark ? '#888' : '#666'} />
+                                <Package size={22} color={isDark ? '#888' : '#666'} />
                               )}
                             </div>
                             <span className="text-[11px] font-semibold text-center leading-tight max-w-[130px]" style={{ color: textColor }}>
-                              {product.title}
+                              {product.name || product.title}
                             </span>
                             <span className="text-[11px] font-bold" style={{ color: '#5C1A1B' }}>
-                              {formatPrice(markedUpPrice)} $
+                              {formatPrice(finalPrice)} $
                             </span>
                             {product.stock > 0 && (
                               <span className="text-[8px]" style={{ color: subtleTextColor }}>
