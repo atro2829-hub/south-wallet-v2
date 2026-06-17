@@ -227,7 +227,8 @@ export interface DbLivechatMessage {
 // --- Sections ---
 
 export async function getSections(): Promise<DbSection[]> {
-  const { data, error } = await supabase
+  // Use supabaseAdmin (service role) so admins see ALL sections regardless of RLS.
+  const { data, error } = await supabaseAdmin
     .from('sections')
     .select('*')
     .order('sort_order', { ascending: true });
@@ -236,7 +237,7 @@ export async function getSections(): Promise<DbSection[]> {
 }
 
 export async function upsertSection(section: Partial<DbSection> & { id: string }): Promise<boolean> {
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from('sections')
     .upsert({ ...section, updated_at: new Date().toISOString() }, { onConflict: 'id' });
   if (error) { console.error('Error upserting section:', error); return false; }
@@ -244,14 +245,14 @@ export async function upsertSection(section: Partial<DbSection> & { id: string }
 }
 
 export async function deleteSection(id: string): Promise<boolean> {
-  const { error } = await supabase.from('sections').delete().eq('id', id);
+  const { error } = await supabaseAdmin.from('sections').delete().eq('id', id);
   if (error) { console.error('Error deleting section:', error); return false; }
   return true;
 }
 
 export async function reorderSections(orderedIds: string[]): Promise<boolean> {
   const updates = orderedIds.map((id, index) =>
-    supabase.from('sections').update({ sort_order: index, updated_at: new Date().toISOString() }).eq('id', id)
+    supabaseAdmin.from('sections').update({ sort_order: index, updated_at: new Date().toISOString() }).eq('id', id)
   );
   const results = await Promise.all(updates);
   const hasError = results.some(r => r.error);
@@ -260,12 +261,20 @@ export async function reorderSections(orderedIds: string[]): Promise<boolean> {
 }
 
 export async function toggleSectionVisibility(id: string, isVisible: boolean): Promise<boolean> {
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from('sections')
     .update({ is_visible: isVisible, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) { console.error('Error toggling section visibility:', error); return false; }
   return true;
+}
+
+// --- API Providers (admin-side, use service role) ---
+
+export async function getApiProviders(): Promise<DbApiProvider[]> {
+  const { data, error } = await supabaseAdmin.from('api_providers').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('Error fetching api_providers:', error); return []; }
+  return data || [];
 }
 
 // --- Support Tickets ---
@@ -401,15 +410,8 @@ export async function getDirectChatMessages(chatId: string): Promise<DbDirectCha
 }
 
 // --- API Providers ---
-
-export async function getApiProviders(): Promise<DbApiProvider[]> {
-  const { data, error } = await supabase
-    .from('api_providers')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) { console.error('Error fetching API providers:', error); return []; }
-  return data || [];
-}
+// (Moved above — getApiProviders is now defined next to the other section helpers
+//  and uses supabaseAdmin to bypass RLS. Removed duplicate here.)
 
 // --- G2Bulk Settings (stored in admin_settings table or Firebase) ---
 // G2Bulk still uses Firebase for settings since there's no dedicated Supabase table

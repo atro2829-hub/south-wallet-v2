@@ -69,6 +69,24 @@ export default function G2BulkPanel() {
   const [activeTab, setActiveTab] = useState('settings');
   const [loading, setLoading] = useState(true);
 
+  // Live progress tracking during sync. Each row represents a synced section
+  // or product so the admin sees progress incrementally instead of waiting
+  // for the whole batch to finish.
+  const [syncProgress, setSyncProgress] = useState<{
+    phase: 'idle' | 'fetching' | 'categories' | 'products' | 'done';
+    current: number;
+    total: number;
+    currentItem: string;
+    log: Array<{ time: string; msg: string; type: 'info' | 'success' | 'error' }>;
+  }>({ phase: 'idle', current: 0, total: 0, currentItem: '', log: [] });
+
+  const appendLog = (msg: string, type: 'info' | 'success' | 'error' = 'info') => {
+    setSyncProgress(prev => ({
+      ...prev,
+      log: [...prev.log.slice(-50), { time: new Date().toLocaleTimeString('ar-EG'), msg, type }],
+    }));
+  };
+
   // Load settings on mount
   useEffect(() => {
     const settingsRef = ref(database, 'adminSettings/g2bulk');
@@ -131,38 +149,41 @@ export default function G2BulkPanel() {
   };
 
   // Sync categories — uses Supabase directly (same path as the user app)
-  // so admins and users see the exact same data.
+  // so admins and users see the exact same data. Each category is written
+  // one-by-one and the progress bar updates in real time so the admin can
+  // watch the sync happen instead of staring at a spinner.
   const handleSyncCategories = async () => {
     setSyncing(true);
+    setSyncProgress({ phase: 'fetching', current: 0, total: 0, currentItem: 'جلب الأقسام من G2Bulk...', log: [] });
     try {
       const { supabaseAdmin } = await import('@/lib/supabase');
-      const { testG2BulkConnection, saveG2BulkApiKey, getG2BulkSettings } = await import('@/lib/g2bulk');
+      const { getG2BulkSettings } = await import('@/lib/g2bulk');
       const settings = await getG2BulkSettings();
       if (!settings?.apiKey) throw new Error('G2Bulk API key not configured');
 
-      // Build a minimal ApiProvider-shaped object for the API call helper
-      const provider = {
-        id: 'g2bulk',
-        name: 'G2Bulk',
-        baseUrl: 'https://api.g2bulk.com/v1/',
-        apiKey: settings.apiKey,
-        authHeaderName: 'X-API-Key',
-        markupPercent: settings.markupPercent ?? 16,
-      };
+      const baseUrl = 'https://api.g2bulk.com/v1/';
+      const headers = { 'X-API-Key': settings.apiKey };
 
-      // Fetch categories from G2Bulk /v1/category
-      const res = await fetch(`${provider.baseUrl}category`, {
-        headers: { [provider.authHeaderName]: provider.apiKey },
-      });
+      appendLog('جاري جلب الأقسام من G2Bulk API...', 'info');
+      const res = await fetch(`${baseUrl}category`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { categories } = await res.json();
+      const { categories: cats } = await res.json();
+      appendLog(`تم استلام ${cats.length} قسم. بدء المزامنة...`, 'success');
+
+      setSyncProgress(prev => ({ ...prev, phase: 'categories', total: cats.length, current: 0 }));
+
       let inserted = 0;
-      for (const cat of categories || []) {
+      let idx = 0;
+      for (const cat of cats) {
+        idx++;
+        const catName = cat.title || `Category ${cat.id}`;
+        setSyncProgress(prev => ({ ...prev, current: idx, currentItem: catName }));
+
         const { error } = await supabaseAdmin.from('api_categories').upsert({
           api_provider_id: 'g2bulk',
           api_category_id: String(cat.id),
-          title: cat.title || `Category ${cat.id}`,
-          title_en: cat.title || `Category ${cat.id}`,
+          title: catName,
+          title_en: catName,
           description: cat.description || '',
           image_url: cat.image_url || '',
           product_count: cat.product_count || 0,
@@ -171,23 +192,37 @@ export default function G2BulkPanel() {
           last_synced_at: new Date().toISOString(),
           section_id: 'digital',
         }, { onConflict: 'api_provider_id,api_category_id' });
-        if (!error) inserted++;
+
+        if (!error) {
+          inserted++;
+          if (idx % 10 === 0 || idx === cats.length) {
+            appendLog(`✓ [${idx}/${cats.length}] ${catName}`, 'success');
+          }
+        } else {
+          appendLog(`✗ [${idx}/${cats.length}] ${catName}: ${error.message}`, 'error');
+        }
       }
-      // Update last_sync_at
+
       await supabaseAdmin.from('api_providers').update({ last_sync_at: new Date().toISOString() }).eq('id', 'g2bulk');
+      appendLog(`اكتملت مزامنة الأقسام: ${inserted}/${cats.length} ناجح`, 'success');
       showToast?.(`تمت مزامنة ${inserted} قسم`, 'success');
     } catch (error: any) {
       console.error('Failed to sync categories:', error);
+      appendLog(`فشل: ${error.message}`, 'error');
       showToast?.('فشل المزامنة: ' + error.message, 'error');
+    } finally {
+      setSyncing(false);
+      setSyncProgress(prev => ({ ...prev, phase: 'done', currentItem: '' }));
     }
-    setSyncing(false);
   };
 
   // Sync products — writes to service_providers + product_packages + api_products
   // (Supabase, not Firebase). Products are routed into the "digital" section so
   // they appear under "الخدمات الرقمية" on the user's home screen.
+  // Progress is shown live so the admin can see each product as it's synced.
   const handleSyncProducts = async () => {
     setSyncing(true);
+    setSyncProgress({ phase: 'fetching', current: 0, total: 0, currentItem: 'جلب المنتجات من G2Bulk...', log: [] });
     try {
       const { supabaseAdmin } = await import('@/lib/supabase');
       const { getG2BulkSettings } = await import('@/lib/g2bulk');
@@ -198,89 +233,82 @@ export default function G2BulkPanel() {
       const apiKey = settings.apiKey;
       const headers = { 'X-API-Key': apiKey };
 
-      // Fetch products + games in parallel. G2Bulk /v1/products does NOT return
-      // image_url, but /v1/games does — so we build a category_id→image_url map
-      // from the games endpoint and fall back to a category-title-based icon
-      // for non-game categories.
+      appendLog('جاري جلب المنتجات + الألعاب + الأقسام (متوازي)...', 'info');
       const [prodRes, gamesRes, catRes] = await Promise.all([
         fetch(`${baseUrl}products`, { headers }),
         fetch(`${baseUrl}games`, { headers }),
         fetch(`${baseUrl}category`, { headers }),
       ]);
       if (!prodRes.ok) throw new Error(`HTTP ${prodRes.status}`);
-      const { products } = await prodRes.json();
+      const { products: prods } = await prodRes.json();
       const gamesData = gamesRes.ok ? (await gamesRes.json()).games : [];
       const catsData = catRes.ok ? (await catRes.json()).categories : [];
+      appendLog(`تم استلام ${prods.length} منتج، ${gamesData.length} لعبة، ${catsData.length} قسم. بدء المزامنة...`, 'success');
 
-      // Build category lookup: id → { title, image_url }
+      // Build category + game image maps (G2Bulk /v1/products doesn't return
+      // image_url, but /v1/games does — we use the game image as the icon
+      // for any product whose category title matches a game name).
       const catMap: Record<string, any> = {};
       for (const c of catsData) catMap[String(c.id)] = c;
-      // Games endpoint returns image_url — use it as a fallback for any category
-      // that matches a game's `name`.
       const gameImageMap: Record<string, string> = {};
       for (const g of gamesData) {
-        if (g.image_url) {
-          gameImageMap[(g.name || '').toLowerCase()] = g.image_url;
-        }
+        if (g.image_url) gameImageMap[(g.name || '').toLowerCase()] = g.image_url;
       }
 
-      const markupPercent = settings.markupPercent ?? 16;
+      const markupPercentValue = settings.markupPercent ?? 16;
+      setSyncProgress(prev => ({ ...prev, phase: 'products', total: prods.length, current: 0 }));
+
       let inserted = 0, errors = 0;
-      for (const prod of products || []) {
+      for (let idx = 0; idx < prods.length; idx++) {
+        const prod = prods[idx];
+        const prodName = prod.title || `Product ${prod.id}`;
+        setSyncProgress(prev => ({ ...prev, current: idx + 1, currentItem: prodName }));
+
         try {
-          // Generate a deterministic id (TEXT PK, no default)
           const newId = `g2bulk-prod-g2bulk-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
 
-          // Pick the best available image for this product:
-          // 1) prod.image_url (rare, G2Bulk usually omits it)
-          // 2) category's image_url (from /v1/category)
-          // 3) game image_url if the category title matches a game name
-          // 4) empty string (the UI will fall back to the category icon)
+          // Resolve image with fallback chain
           const cat = catMap[String(prod.category_id)] || {};
           const catTitle = (cat.title || prod.category_title || '').toLowerCase();
           let imageUrl = prod.image_url || cat.image_url || '';
           if (!imageUrl && catTitle) {
-            // Try exact match
             if (gameImageMap[catTitle]) imageUrl = gameImageMap[catTitle];
-            // Try partial match (e.g. "pubg" in "Pubg Mobile UC")
             else {
-              for (const [gameName, url] of Object.entries(gameImageMap)) {
-                if (catTitle.includes(gameName) || gameName.includes(catTitle)) {
-                  imageUrl = url;
-                  break;
-                }
+              for (const [gn, url] of Object.entries(gameImageMap)) {
+                if (catTitle.includes(gn) || gn.includes(catTitle)) { imageUrl = url; break; }
               }
             }
           }
 
-          // 1) service_providers — store image_url so the user app can render it
+          // 1) service_providers
           const { error: spError } = await supabaseAdmin.from('service_providers').upsert({
             id: newId,
-            name: prod.title || `منتج ${prod.id}`,
-            name_en: prod.title || `Product ${prod.id}`,
+            name: prodName,
+            name_en: prodName,
             description: prod.description || '',
-            section_id: 'digital',          // "الخدمات الرقمية"
+            section_id: 'digital',
             sub_section_id: null,
             api_product_id: String(prod.id),
             api_provider_id: 'g2bulk',
-            icon: imageUrl ? '' : 'package',  // use text icon only if no image
-            image_url: imageUrl,               // ← store the actual image
+            icon: imageUrl ? '' : 'package',
+            image_url: imageUrl,
             color: '#8B5CF6',
             is_active: true,
+            is_visible: true,
             sort_order: prod.id,
             execution_type: 'api',
           }, { onConflict: 'id' });
-          if (spError) { errors++; continue; }
+          if (spError) { errors++; appendLog(`✗ [${idx + 1}/${prods.length}] ${prodName}: ${spError.message}`, 'error'); continue; }
 
-          // 2) product_packages — apply markup (USD only)
+          // 2) product_packages — apply markup
           const pkgId = `g2bulk-pkg-g2bulk-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
           const costPrice = Number(prod.unit_price) || 0;
-          const finalPriceUsd = Number((costPrice * (1 + markupPercent / 100)).toFixed(2));
+          const finalPriceUsd = Number((costPrice * (1 + markupPercentValue / 100)).toFixed(2));
           const { error: pkgError } = await supabaseAdmin.from('product_packages').upsert({
             id: pkgId,
             provider_id: newId,
-            name: prod.title || `منتج ${prod.id}`,
-            name_en: prod.title || `Product ${prod.id}`,
+            name: prodName,
+            name_en: prodName,
             description: prod.description || '',
             price_usd: finalPriceUsd,
             price_yer: 0,
@@ -293,15 +321,15 @@ export default function G2BulkPanel() {
             api_product_id: String(prod.id),
             is_active: true,
           }, { onConflict: 'id' });
-          if (pkgError) { errors++; continue; }
+          if (pkgError) { errors++; appendLog(`✗ [${idx + 1}/${prods.length}] ${prodName}: ${pkgError.message}`, 'error'); continue; }
 
-          // 3) api_products — mirror with image_url
+          // 3) api_products
           const { error: apiProdError } = await supabaseAdmin.from('api_products').upsert({
             api_provider_id: 'g2bulk',
             api_category_id: String(prod.category_id),
             api_product_id: String(prod.id),
-            name: prod.title || `Product ${prod.id}`,
-            name_en: prod.title || `Product ${prod.id}`,
+            name: prodName,
+            name_en: prodName,
             description: prod.description || '',
             price: costPrice,
             currency: 'USD',
@@ -316,43 +344,53 @@ export default function G2BulkPanel() {
           if (apiProdError) { errors++; continue; }
 
           inserted++;
+          if (idx % 25 === 0 || idx === prods.length - 1) {
+            appendLog(`✓ [${idx + 1}/${prods.length}] ${prodName}${imageUrl ? ' (مع صورة)' : ''}`, 'success');
+          }
         } catch (e) {
           errors++;
         }
       }
+
       await supabaseAdmin.from('api_providers').update({ last_sync_at: new Date().toISOString() }).eq('id', 'g2bulk');
+      appendLog(`اكتملت مزامنة المنتجات: ${inserted}/${prods.length} ناجح، ${errors} خطأ`, errors > 0 ? 'warning' : 'success');
       showToast?.(`تمت مزامنة ${inserted} منتج (${errors} أخطاء)`, errors > 0 ? 'warning' : 'success');
     } catch (error: any) {
       console.error('Failed to sync products:', error);
+      appendLog(`فشل: ${error.message}`, 'error');
       showToast?.('فشل المزامنة: ' + error.message, 'error');
+    } finally {
+      setSyncing(false);
+      setSyncProgress(prev => ({ ...prev, phase: 'done', currentItem: '' }));
     }
-    setSyncing(false);
   };
 
   // Full sync = categories + products + balance refresh
   const handleFullSync = async () => {
-    setSyncing(true);
+    setSyncProgress({ phase: 'fetching', current: 0, total: 0, currentItem: 'بدء المزامنة الكاملة...', log: [] });
+    appendLog('بدء المزامنة الكاملة...', 'info');
+    await handleSyncCategories();
+    await handleSyncProducts();
     try {
-      await handleSyncCategories();
-      await handleSyncProducts();
-      // Refresh balance
       const { supabaseAdmin } = await import('@/lib/supabase');
-      const balRes = await fetch('https://api.g2bulk.com/v1/getMe', {
-        headers: { 'X-API-Key': (await import('@/lib/g2bulk')).getG2BulkSettings ? (await (await import('@/lib/g2bulk')).getG2BulkSettings())?.apiKey : '' },
-      });
-      if (balRes.ok) {
-        const me = await balRes.json();
-        await supabaseAdmin.from('api_providers').update({
-          balance: me.balance || 0,
-          balance_currency: 'USD',
-          last_balance_check: new Date().toISOString(),
-        }).eq('id', 'g2bulk');
+      const { getG2BulkSettings } = await import('@/lib/g2bulk');
+      const settings = await getG2BulkSettings();
+      if (settings?.apiKey) {
+        const balRes = await fetch('https://api.g2bulk.com/v1/getMe', { headers: { 'X-API-Key': settings.apiKey } });
+        if (balRes.ok) {
+          const me = await balRes.json();
+          await supabaseAdmin.from('api_providers').update({
+            balance: me.balance || 0,
+            balance_currency: 'USD',
+            last_balance_check: new Date().toISOString(),
+          }).eq('id', 'g2bulk');
+          appendLog(`تم تحديث رصيد G2Bulk: ${me.balance} USD`, 'success');
+        }
       }
-    } catch (error: any) {
-      console.error('Failed full sync:', error);
-      showToast?.('فشل المزامنة الكاملة: ' + error.message, 'error');
+    } catch (e: any) {
+      appendLog(`فشل تحديث الرصيد: ${e.message}`, 'error');
     }
-    setSyncing(false);
+    appendLog('اكتملت المزامنة الكاملة', 'success');
   };
 
   // Check balance
@@ -856,11 +894,60 @@ export default function G2BulkPanel() {
                 </Button>
               </div>
 
-              {syncing && (
-                <div className="flex items-center justify-center gap-2 p-4">
-                  <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
-                  <span className="text-sm text-muted-foreground">جارٍ المزامنة...</span>
+              {syncing && syncProgress.phase !== 'idle' && (
+                <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border">
+                  {/* Phase + current item */}
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+                    <span className="text-sm font-medium">
+                      {syncProgress.phase === 'fetching' && 'جارٍ الجلب من G2Bulk...'}
+                      {syncProgress.phase === 'categories' && `مزامنة الأقسام (${syncProgress.current}/${syncProgress.total})`}
+                      {syncProgress.phase === 'products' && `مزامنة المنتجات (${syncProgress.current}/${syncProgress.total})`}
+                      {syncProgress.phase === 'done' && 'اكتملت المزامنة'}
+                    </span>
+                  </div>
+                  {syncProgress.currentItem && (
+                    <p className="text-xs text-muted-foreground truncate pr-6">→ {syncProgress.currentItem}</p>
+                  )}
+                  {/* Progress bar */}
+                  {syncProgress.total > 0 && (
+                    <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-cyan-500 transition-all duration-300"
+                        style={{ width: `${Math.min(100, (syncProgress.current / syncProgress.total) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                  {/* Live log */}
+                  {syncProgress.log.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto rounded-md bg-background/50 border border-border/50 p-2 space-y-0.5" dir="ltr">
+                      {syncProgress.log.slice(-30).map((entry, i) => (
+                        <div key={i} className="text-[10px] font-mono flex gap-2" style={{
+                          color: entry.type === 'success' ? '#10B981' : entry.type === 'error' ? '#EF4444' : '#888',
+                        }}>
+                          <span className="text-muted-foreground shrink-0">{entry.time}</span>
+                          <span className="truncate">{entry.msg}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
+              )}
+
+              {!syncing && syncProgress.phase === 'done' && syncProgress.log.length > 0 && (
+                <details className="rounded-lg bg-muted/30 border border-border">
+                  <summary className="cursor-pointer p-3 text-sm text-muted-foreground">سجل آخر مزامنة ({syncProgress.log.length} حدث)</summary>
+                  <div className="max-h-48 overflow-y-auto px-3 pb-3 space-y-0.5" dir="ltr">
+                    {syncProgress.log.map((entry, i) => (
+                      <div key={i} className="text-[10px] font-mono flex gap-2" style={{
+                        color: entry.type === 'success' ? '#10B981' : entry.type === 'error' ? '#EF4444' : '#888',
+                      }}>
+                        <span className="text-muted-foreground shrink-0">{entry.time}</span>
+                        <span className="truncate">{entry.msg}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
 
               {!apiKey && (

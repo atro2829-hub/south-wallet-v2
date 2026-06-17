@@ -379,64 +379,118 @@ export default function WalletScreen() {
   const loadFirebaseData = useCallback(async () => {
     if (!user?.id) return;
     try {
-      // Load transactions
-      const txRef = ref(database, 'transactions');
-      const txSnapshot = await get(txRef);
-      if (txSnapshot.exists()) {
-        const data = txSnapshot.val();
-        const txList = Object.keys(data)
-          .map(key => data[key])
-          .filter((tx: { fromUserId: string; toUserId: string }) => tx.fromUserId === user.id || tx.toUserId === user.id)
-          .sort((a: { createdAt: string }, b: { createdAt: string }) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const { supabase } = await import('@/lib/supabase');
+
+      // 1. Load transactions where the user is sender OR recipient OR owner.
+      // The Supabase transactions table uses snake_case (user_id, from_user_id,
+      // to_user_id, created_at). Previously this code filtered camelCase keys
+      // on the entire transactions list — which (a) didn't match any rows and
+      // (b) loaded every transaction in the database into memory.
+      const { data: txData, error: txErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .or(`user_id.eq.${user.id},from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (txErr) {
+        console.warn('[wallet-screen] transactions fetch error:', txErr.message);
+      } else if (txData) {
+        // Map snake_case → camelCase so the rest of the component works.
+        const txList = txData.map((t: any) => ({
+          id: t.id,
+          userId: t.user_id,
+          fromUserId: t.from_user_id,
+          toUserId: t.to_user_id,
+          amount: Number(t.amount) || 0,
+          currency: t.currency || 'YER',
+          fee: Number(t.fee) || 0,
+          type: t.type || 'transfer',
+          status: t.status || 'pending',
+          description: t.description || '',
+          referenceNumber: t.reference_number || '',
+          senderName: t.sender_name || '',
+          senderPhone: t.sender_phone || '',
+          receiverName: t.receiver_name || '',
+          receiverPhone: t.receiver_phone || '',
+          receiverCardNumber: t.receiver_card_number || '',
+          createdAt: t.created_at,
+          completedAt: t.completed_at,
+        }));
         setTransactions(txList);
       }
 
-      // Load orders
-      const ordersRef = ref(database, 'orders');
-      const ordersSnapshot = await get(ordersRef);
-      if (ordersSnapshot.exists()) {
-        const data = ordersSnapshot.val();
-        const orderList = Object.keys(data)
-          .map(key => data[key])
-          .filter((o: { userId: string }) => o.userId === user.id)
-          .sort((a: { createdAt: string }, b: { createdAt: string }) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      // 2. Load the user's orders
+      const { data: orderData, error: orderErr } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (orderErr) {
+        console.warn('[wallet-screen] orders fetch error:', orderErr.message);
+      } else if (orderData) {
+        const orderList = orderData.map((o: any) => ({
+          id: o.id,
+          userId: o.user_id,
+          providerId: o.provider_id,
+          providerName: o.provider_name || '',
+          packageName: o.package_name || '',
+          customerInput: o.customer_input || '',
+          amount: Number(o.amount) || 0,
+          currency: o.currency || 'YER',
+          status: o.status || 'pending',
+          createdAt: o.created_at,
+        }));
         setOrders(orderList);
       }
 
-      // Refresh user balance
-      const userRef = ref(database, `users/${user.id}`);
-      const userSnapshot = await get(userRef);
-      if (userSnapshot.exists()) {
-        const userData = userSnapshot.val();
+      // 3. Refresh the user's balance from Supabase (snake_case columns)
+      const { data: userData } = await supabase
+        .from('users')
+        .select('balance_yer,balance_sar,balance_usd,kyc_status')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (userData) {
         setUser({
           ...user,
-          balanceYER: userData.balanceYER || 0,
-          balanceSAR: userData.balanceSAR || 0,
-          balanceUSD: userData.balanceUSD || 0,
-          kycStatus: userData.kycStatus || user.kycStatus,
+          balanceYER: Number(userData.balance_yer) || 0,
+          balanceSAR: Number(userData.balance_sar) || 0,
+          balanceUSD: Number(userData.balance_usd) || 0,
+          kycStatus: userData.kyc_status || user.kycStatus,
         });
       }
     } catch (error) {
-      console.error('Error loading Firebase data:', error);
+      console.error('Error loading wallet data:', error);
     }
   }, [user, setTransactions, setOrders, setUser]);
 
-  // Real-time listener for transactions
+  // Real-time listener for transactions (Supabase Realtime)
   useEffect(() => {
     if (!user?.id) return;
-    const txRef = ref(database, 'transactions');
-    const unsubscribe = onValue(txRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const txList = Object.keys(data)
-          .map(key => data[key])
-          .filter((tx: { fromUserId: string; toUserId: string }) => tx.fromUserId === user.id || tx.toUserId === user.id)
-          .sort((a: { createdAt: string }, b: { createdAt: string }) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setTransactions(txList);
+    let channel: any = null;
+    (async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        channel = supabase
+          .channel(`wallet-tx-${user.id}-${Date.now()}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => loadFirebaseData())
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => loadFirebaseData())
+          .subscribe();
+      } catch (e) {
+        console.warn('[wallet-screen] realtime setup failed:', e);
       }
-    });
-    return () => unsubscribe();
-  }, [user?.id, setTransactions]);
+    })();
+    return () => {
+      if (channel) {
+        (async () => {
+          try {
+            const { supabase } = await import('@/lib/supabase');
+            supabase.removeChannel(channel);
+          } catch {}
+        })();
+      }
+    };
+  }, [user?.id, loadFirebaseData]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

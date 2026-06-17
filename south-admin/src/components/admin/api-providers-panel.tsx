@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ref, onValue, update, remove, set, push } from '@/lib/db-compat';
 import { database } from '@/lib/firebase';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -146,13 +146,79 @@ export default function ApiProvidersPanel() {
     return () => unsub();
   }, []);
 
-  // Listen to sections for assignment dropdown
+  // Load providers from Supabase (source of truth) so the list reflects
+  // what was actually saved — the Firebase listener above won't fire for
+  // providers saved via supabaseAdmin (the new save path).
+  const loadProviders = useCallback(async () => {
+    try {
+      const { data, error } = await supabaseAdmin.from('api_providers')
+        .select('*').order('created_at', { ascending: false });
+      if (error) {
+        console.warn('[loadProviders] supabase error:', error.message);
+        return;
+      }
+      // Convert array to the record shape the component expects (camelCase).
+      const map: Record<string, any> = {};
+      for (const p of data || []) {
+        map[p.id] = {
+          id: p.id,
+          name: p.name,
+          baseUrl: p.api_url,
+          apiKey: p.api_key,
+          authHeader: p.auth_header,
+          isActive: p.is_active,
+          syncEnabled: p.sync_products,
+          sectionId: p.config?.sectionId || 'digital',
+          commission: p.default_commission,
+          commissionType: p.commission_type,
+          icon: p.config?.icon || '',
+          balance: p.balance || 0,
+          balanceCurrency: p.balance_currency || 'USD',
+          lastBalanceCheck: p.last_balance_check,
+          lastSyncAt: p.last_sync_at,
+          createdAt: p.created_at,
+        };
+      }
+      setProviders(map);
+    } catch (e) {
+      console.warn('[loadProviders] exception:', e);
+    }
+  }, []);
+
   useEffect(() => {
-    const sectionsRef = ref(database, 'sections');
-    const unsub = onValue(sectionsRef, (snapshot) => {
-      setSections(snapshot.val() || {});
-    });
-    return () => unsub();
+    loadProviders();
+    const channel = supabaseAdmin.channel(`api-providers-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'api_providers' }, () => loadProviders())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
+  }, [loadProviders]);
+
+  // Listen to sections for assignment dropdown — load from Supabase instead
+  // of Firebase so the dropdown only shows real, visible sections (no fake
+  // "service-providers" entry).
+  useEffect(() => {
+    const loadSections = async () => {
+      const { data } = await supabaseAdmin.from('sections')
+        .select('id,name,name_en,icon,is_visible,is_active,sort_order')
+        .eq('is_active', true)
+        .order('sort_order');
+      const map: Record<string, any> = {};
+      for (const s of data || []) {
+        map[s.id] = {
+          id: s.id,
+          name: s.name || s.name_en,
+          icon: s.icon || 'globe',
+          isActive: s.is_active !== false,
+          sortOrder: s.sort_order ?? 0,
+        };
+      }
+      setSections(map);
+    };
+    loadSections();
+    const channel = supabaseAdmin.channel(`api-providers-sections-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => loadSections())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
   }, []);
 
   // Load balance logs from Firebase
@@ -235,93 +301,82 @@ export default function ApiProvidersPanel() {
 
     try {
       const providerId = editing || name.trim().toLowerCase().replace(/[\s]+/g, '-').replace(/[^\u0600-\u06FFa-zA-Z0-9\-]/g, '') || `provider-${Date.now()}`;
+      const finalBaseUrl = baseUrl.trim().endsWith('/') ? baseUrl.trim() : baseUrl.trim() + '/';
 
-      const data: any = {
-        id: providerId,
-        name: name.trim(),
-        baseUrl: baseUrl.trim().endsWith('/') ? baseUrl.trim() : baseUrl.trim() + '/',
-        apiKey: apiKey.trim(),
-        authHeader: authHeader.trim() || 'X-API-Key',
-        isActive,
-        syncEnabled,
-        sectionId: sectionId || 'service-providers',
-        commission: commission || 0,
-        commissionType: commissionType || 'percentage',
-        icon: icon || '',
-        createdAt: editing && providers[editing]?.createdAt ? providers[editing].createdAt : new Date().toISOString(),
-      };
+      // 1) Upsert to Supabase api_providers table using SERVICE-ROLE client so
+      //    RLS doesn't block the write (RLS on api_providers allows public
+      //    SELECT but only admin writes — anon client can't write).
+      const { error: sbError } = await supabaseAdmin
+        .from('api_providers')
+        .upsert({
+          id: providerId,
+          name: name.trim(),
+          description: '',
+          website: '',
+          api_url: finalBaseUrl,
+          api_key: apiKey.trim(),
+          auth_header: authHeader.trim() || 'X-API-Key',
+          auth_type: authHeader.trim().toLowerCase() === 'authorization' ? 'bearer' : 'header',
+          is_active: isActive,
+          balance: providers[providerId]?.balance || 0,
+          balance_currency: providers[providerId]?.balanceCurrency || 'USD',
+          last_balance_check: providers[providerId]?.lastBalanceCheck || null,
+          default_commission: commission || 0,
+          commission_type: commissionType || 'percentage',
+          sync_categories: syncEnabled,
+          sync_products: syncEnabled,
+          last_sync_at: providers[providerId]?.lastSyncAt || null,
+          config: { icon: icon || '', sectionId: sectionId || 'digital' },
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
 
-      if (apiSecret.trim()) data.apiSecret = apiSecret.trim();
-
-      if (sectionId && sections[sectionId]) {
-        data.sectionName = sections[sectionId].name || '';
-        data.sectionIcon = sections[sectionId].icon || '';
+      if (sbError) {
+        console.error('[handleSave] Supabase upsert error:', sbError);
+        showToast('فشل حفظ المزود: ' + sbError.message, 'error');
+        return;
       }
 
-      await set(ref(database, `adminSettings/apiProviders/${providerId}`), {
-        ...providers[providerId],
-        ...data,
-      });
-
-      const targetSectionId = sectionId || 'service-providers';
-      const subSectionData = {
-        id: providerId,
-        name: name.trim(),
-        icon: icon || '',
-        isActive,
-        parentId: targetSectionId,
-        sortOrder: 0,
-        apiProviderId: providerId,
-      };
-      await set(ref(database, `sections/${targetSectionId}/subSections/${providerId}`), subSectionData);
-
-      if (!sections[targetSectionId]) {
-        await set(ref(database, `sections/${targetSectionId}`), {
-          id: targetSectionId,
-          name: targetSectionId === 'service-providers' ? 'خدمات المزودين' : targetSectionId,
-          icon: icon || 'globe',
-          color: MAROON.accent,
-          sortOrder: 1,
-          isActive: true,
-          type: 'main',
-          subSections: { [providerId]: subSectionData },
-        });
-      }
-
-      // Also upsert to Supabase api_providers table
-      try {
-        const { error: sbError } = await supabase
-          .from('api_providers')
-          .upsert({
-            id: providerId,
+      // 2) If the admin picked a real section, ensure it exists and link the
+      //    provider's products to that section. Skip the fake "service-providers"
+      //    section entirely — that was a leftover that never appeared in the
+      //    user app, which is why added providers seemed to "not work".
+      const targetSectionId = sectionId || 'digital'; // default = "الخدمات الرقمية"
+      if (targetSectionId && targetSectionId !== 'service-providers') {
+        // Make sure the section exists; if not, create a minimal row so the
+        // FK on service_providers won't fail.
+        const { data: existingSection } = await supabaseAdmin.from('sections')
+          .select('id').eq('id', targetSectionId).maybeSingle();
+        if (!existingSection) {
+          await supabaseAdmin.from('sections').upsert({
+            id: targetSectionId,
             name: name.trim(),
-            description: '',
-            website: '',
-            api_url: baseUrl.trim().endsWith('/') ? baseUrl.trim() : baseUrl.trim() + '/',
-            api_key: apiKey.trim(),
-            auth_header: authHeader.trim() || 'X-API-Key',
-            auth_type: authHeader.trim().toLowerCase() === 'authorization' ? 'bearer' : 'header',
-            is_active: isActive,
-            balance: providers[providerId]?.balance || 0,
-            balance_currency: providers[providerId]?.balanceCurrency || 'USD',
-            last_balance_check: providers[providerId]?.lastBalanceCheck || null,
-            default_commission: commission || 0,
-            commission_type: commissionType || 'percentage',
-            sync_categories: syncEnabled,
-            sync_products: syncEnabled,
-            last_sync_at: null,
-            config: { icon: icon || '', sectionId: sectionId || 'service-providers' },
+            name_en: name.trim(),
+            icon: icon || 'globe',
+            color: '#5C1A1B',
+            type: 'api',
+            sort_order: 99,
+            is_active: true,
+            is_visible: true,
+            api_provider_id: providerId,
           }, { onConflict: 'id' });
-        if (sbError) console.warn('Supabase upsert warning:', sbError.message);
-      } catch (sbErr) {
-        console.warn('Supabase sync warning:', sbErr);
+        } else {
+          // Link the section to this provider
+          await supabaseAdmin.from('sections').update({
+            api_provider_id: providerId,
+            type: 'api',
+            updated_at: new Date().toISOString(),
+          }).eq('id', targetSectionId);
+        }
       }
 
       showToast(editing ? 'تم تحديث المزود' : 'تم إضافة المزود', 'success');
       setDialog(false);
       resetForm();
-    } catch {
-      showToast('حدث خطأ', 'error');
+      // Reload list
+      await loadProviders();
+    } catch (e: any) {
+      console.error('[handleSave] error:', e);
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
     }
   };
 

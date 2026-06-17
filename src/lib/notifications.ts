@@ -27,59 +27,87 @@ async function sendFCMPush(tokens: string[], title: string, body: string, type: 
 }
 
 /**
- * Get FCM token for a user from Firebase RTDB
+ * Get FCM token for a user — read directly from Supabase users.fcm_token.
+ * Previously read from `users/{uid}/fcmToken` via db-compat which (a) returns
+ * the entire user row, not the single field, and (b) looked for camelCase
+ * `fcmToken` while Supabase stores snake_case `fcm_token`. Result: always
+ * returned null → no push notifications ever delivered.
  */
 async function getUserFCMToken(userId: string): Promise<string | null> {
   try {
-    const tokenSnapshot = await get(ref(database, `users/${userId}/fcmToken`));
-    return tokenSnapshot.exists() ? tokenSnapshot.val() : null;
-  } catch {
+    const { supabase } = await import('@/lib/supabase');
+    const { data, error } = await supabase
+      .from('users')
+      .select('fcm_token')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) {
+      console.warn('[getUserFCMToken] supabase error:', error.message);
+      return null;
+    }
+    return data?.fcm_token || null;
+  } catch (e) {
+    console.warn('[getUserFCMToken] exception:', e);
     return null;
   }
 }
 
 /**
- * Get FCM tokens for all users
+ * Get FCM tokens for all users (or filtered by role).
  */
-async function getAllUserFCMTokens(): Promise<string[]> {
+async function getAllUserFCMTokens(roleFilter?: 'admin' | 'owner'): Promise<string[]> {
   try {
-    const usersSnapshot = await get(ref(database, 'users'));
-    if (!usersSnapshot.exists()) return [];
-
-    const users = usersSnapshot.val();
-    const tokens: string[] = [];
-    Object.values(users).forEach((userData: any) => {
-      if (userData.fcmToken) {
-        tokens.push(userData.fcmToken);
-      }
-    });
-    return tokens;
-  } catch {
+    const { supabaseService } = await import('@/lib/supabase');
+    let query = supabaseService.from('users').select('fcm_token,role').not('fcm_token', 'is', null);
+    if (roleFilter) {
+      query = query.in('role', [roleFilter, 'admin', 'owner']);
+    }
+    const { data, error } = await query;
+    if (error) {
+      console.warn('[getAllUserFCMTokens] supabase error:', error.message);
+      return [];
+    }
+    if (roleFilter) {
+      // Strict filter: only admins/owners
+      return (data || [])
+        .filter((u: any) => u.role === roleFilter || (roleFilter === 'admin' && u.role === 'owner'))
+        .map((u: any) => u.fcm_token)
+        .filter(Boolean);
+    }
+    return (data || []).map((u: any) => u.fcm_token).filter(Boolean);
+  } catch (e) {
+    console.warn('[getAllUserFCMTokens] exception:', e);
     return [];
   }
 }
 
 /**
  * Send a notification to a specific user (in-app + FCM push)
+ *
+ * In-app notification is persisted to the `notifications` Supabase table
+ * (snake_case columns: user_id, is_read, navigation_target, navigation_params).
+ * Previously wrote camelCase fields via db-compat which silently failed.
  */
 export async function sendNotificationToUser(userId: string, notification: NotificationPayload): Promise<void> {
-  const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const notifData = {
-    id: notifId,
-    title: notification.title,
-    body: notification.body,
-    type: notification.type,
-    isRead: false,
-    createdAt: new Date().toISOString(),
-    navigationTarget: notification.navigationTarget || null,
-    navigationParams: notification.navigationParams || null,
-    data: notification.data || null,
-  };
+  // 1. Persist to Supabase notifications table so the user sees it in-app.
+  try {
+    const { supabaseService } = await import('@/lib/supabase');
+    const { error } = await supabaseService.from('notifications').insert({
+      user_id: userId,
+      title: notification.title,
+      body: notification.body,
+      type: notification.type || 'info',
+      is_read: false,
+      navigation_target: notification.navigationTarget || null,
+      navigation_params: notification.navigationParams || null,
+      data: notification.data || null,
+    });
+    if (error) console.warn('[sendNotificationToUser] supabase insert failed:', error.message);
+  } catch (e) {
+    console.warn('[sendNotificationToUser] supabase insert exception:', e);
+  }
 
-  // 1. Save to Firebase RTDB (in-app notification)
-  await set(ref(database, `notifications/${userId}/${notifId}`), notifData);
-
-  // 2. Send FCM push notification (works when app is closed)
+  // 2. Send FCM push notification (works when app is closed).
   const fcmToken = await getUserFCMToken(userId);
   if (fcmToken) {
     await sendFCMPush([fcmToken], notification.title, notification.body, notification.type, {
@@ -87,75 +115,74 @@ export async function sendNotificationToUser(userId: string, notification: Notif
       navigationTarget: notification.navigationTarget,
       navigationParams: notification.navigationParams,
     });
+  } else {
+    console.warn(`[sendNotificationToUser] no FCM token for user ${userId} — push skipped`);
   }
 }
 
 /**
- * Send a notification to all users (in-app + FCM push)
+ * Send a notification to all users (in-app + FCM push).
+ * Uses supabaseService to bypass RLS for the bulk insert.
  */
 export async function sendNotificationToAll(notification: NotificationPayload): Promise<void> {
-  const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  try {
+    const { supabaseService } = await import('@/lib/supabase');
+    // 1. Fetch all user IDs + FCM tokens
+    const { data: users, error } = await supabaseService.from('users')
+      .select('id,fcm_token')
+      .eq('is_blocked', false);
+    if (error) {
+      console.warn('[sendNotificationToAll] fetch users error:', error.message);
+      return;
+    }
+    if (!users || users.length === 0) return;
 
-  // Get all users
-  const usersSnapshot = await get(ref(database, 'users'));
-  if (!usersSnapshot.exists()) return;
-
-  const users = usersSnapshot.val();
-  const updates: Record<string, any> = {};
-  const tokens: string[] = [];
-
-  Object.entries(users).forEach(([uid, userData]: [string, any]) => {
-    updates[`notifications/${uid}/${notifId}`] = {
-      id: notifId,
+    // 2. Bulk insert notifications
+    const rows = users.map((u: any) => ({
+      user_id: u.id,
       title: notification.title,
       body: notification.body,
-      type: notification.type,
-      isRead: false,
-      createdAt: new Date().toISOString(),
-      navigationTarget: notification.navigationTarget || null,
-      navigationParams: notification.navigationParams || null,
+      type: notification.type || 'info',
+      is_read: false,
+      navigation_target: notification.navigationTarget || null,
+      navigation_params: notification.navigationParams || null,
       data: notification.data || null,
-    };
+    }));
+    const { error: insErr } = await supabaseService.from('notifications').insert(rows);
+    if (insErr) console.warn('[sendNotificationToAll] bulk insert failed:', insErr.message);
 
-    // Collect FCM tokens
-    if (userData.fcmToken) {
-      tokens.push(userData.fcmToken);
+    // 3. Send FCM push in batches of 500
+    const tokens: string[] = users.map((u: any) => u.fcm_token).filter(Boolean);
+    for (let i = 0; i < tokens.length; i += 500) {
+      const batch = tokens.slice(i, i + 500);
+      await sendFCMPush(batch, notification.title, notification.body, notification.type, {
+        ...notification.data,
+        navigationTarget: notification.navigationTarget,
+        navigationParams: notification.navigationParams,
+      });
     }
-  });
-
-  // 1. Save to Firebase RTDB (in-app notifications)
-  await update(ref(database), updates);
-
-  // 2. Send FCM push notifications (works when app is closed)
-  // Send in batches of 500 (FCM multicast limit)
-  for (let i = 0; i < tokens.length; i += 500) {
-    const batch = tokens.slice(i, i + 500);
-    await sendFCMPush(batch, notification.title, notification.body, notification.type, {
-      ...notification.data,
-      navigationTarget: notification.navigationTarget,
-      navigationParams: notification.navigationParams,
-    });
+  } catch (e) {
+    console.warn('[sendNotificationToAll] exception:', e);
   }
 }
 
 /**
- * Get FCM tokens for all admin users (role = admin or owner)
+ * Get FCM tokens for all admin/owner users — read from Supabase users.fcm_token.
  */
 async function getAdminFCMTokens(): Promise<string[]> {
   try {
-    const usersSnapshot = await get(ref(database, 'users'));
-    if (!usersSnapshot.exists()) return [];
-
-    const users = usersSnapshot.val();
-    const tokens: string[] = [];
-    Object.values(users).forEach((userData: any) => {
-      // Include admin and owner users who have FCM tokens
-      if ((userData.role === 'admin' || userData.role === 'owner') && userData.fcmToken) {
-        tokens.push(userData.fcmToken);
-      }
-    });
-    return tokens;
-  } catch {
+    const { supabaseService } = await import('@/lib/supabase');
+    const { data, error } = await supabaseService.from('users')
+      .select('fcm_token')
+      .in('role', ['admin', 'owner', 'super_admin'])
+      .not('fcm_token', 'is', null);
+    if (error) {
+      console.warn('[getAdminFCMTokens] supabase error:', error.message);
+      return [];
+    }
+    return (data || []).map((u: any) => u.fcm_token).filter(Boolean);
+  } catch (e) {
+    console.warn('[getAdminFCMTokens] exception:', e);
     return [];
   }
 }

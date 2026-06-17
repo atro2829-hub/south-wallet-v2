@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, update } from '@/lib/db-compat';
-import { database } from '@/lib/firebase';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,8 +11,8 @@ import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Eye, EyeOff, Save, Loader2, Layers, Globe, CreditCard, Wallet, Shield, Gift, ArrowLeftRight, Check, X, Filter } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
+import { Search, Eye, EyeOff, Save, Loader2, Layers, Globe, Shield, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface VisibilityItem {
@@ -21,11 +20,11 @@ interface VisibilityItem {
   name: string;
   type: 'section' | 'provider' | 'feature';
   isVisible: boolean;
-  parentName?: string;
+  dbId?: string;
 }
 
 export default function VisibilityPanel() {
-  const { adminUser, showToast } = useAdminStore();
+  const { showToast } = useAdminStore();
   const [items, setItems] = useState<VisibilityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -35,41 +34,61 @@ export default function VisibilityPanel() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    // Load sections
-    const sectionsRef = ref(database, 'sections');
-    const unsub1 = onValue(sectionsRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const sectionItems: VisibilityItem[] = Object.entries(data).map(([key, val]: [string, any]) => ({
-        id: `section_${key}`, name: val.name || key, type: 'section' as const,
-        isVisible: val.isActive !== false,
-      }));
-
-      // Load providers
-      const providersRef = ref(database, 'providers');
-      const unsub2 = onValue(providersRef, (snapshot2) => {
-        const provData = snapshot2.val() || {};
-        const providerItems: VisibilityItem[] = Object.entries(provData).map(([key, val]: [string, any]) => ({
-          id: `provider_${key}`, name: val.name || key, type: 'provider' as const,
-          isVisible: val.isActive !== false,
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        const { data: sectionsData } = await supabaseAdmin
+          .from('sections').select('id,name,is_visible').order('sort_order');
+        const sectionItems: VisibilityItem[] = (sectionsData || []).map((s: any) => ({
+          id: `section_${s.id}`,
+          dbId: s.id,
+          name: s.name || s.id,
+          type: 'section' as const,
+          isVisible: s.is_visible !== false,
         }));
 
-        // Load feature flags
-        const featRef = ref(database, 'adminSettings/featureFlags');
-        const unsub3 = onValue(featRef, (snapshot3) => {
-          const featData = snapshot3.val() || {};
-          const featureItems: VisibilityItem[] = Object.entries(featData).map(([key, val]: [string, any]) => ({
-            id: `feature_${key}`, name: key, type: 'feature' as const,
-            isVisible: val !== false,
-          }));
+        const { data: providersData } = await supabaseAdmin
+          .from('service_providers').select('id,name,is_visible').order('sort_order').limit(500);
+        const providerItems: VisibilityItem[] = (providersData || []).map((p: any) => ({
+          id: `provider_${p.id}`,
+          dbId: p.id,
+          name: p.name || p.id,
+          type: 'provider' as const,
+          isVisible: p.is_visible !== false,
+        }));
 
-          setItems([...sectionItems, ...providerItems, ...featureItems]);
-          setLoading(false);
-        });
-        return () => unsub3();
-      });
-      return () => unsub2();
-    });
-    return () => unsub1();
+        const { data: featRow } = await supabaseAdmin
+          .from('app_config').select('value').eq('key', 'featureFlags').maybeSingle();
+        const featData: Record<string, boolean> = (featRow?.value as any) || {};
+        const featureItems: VisibilityItem[] = Object.entries(featData).map(([key, val]) => ({
+          id: `feature_${key}`,
+          dbId: key,
+          name: key,
+          type: 'feature' as const,
+          isVisible: val !== false,
+        }));
+
+        if (!cancelled) setItems([...sectionItems, ...providerItems, ...featureItems]);
+      } catch (e) {
+        console.error('[visibility-panel] load error:', e);
+        if (!cancelled) setItems([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    const secChannel = supabaseAdmin.channel(`visibility-sec-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => load())
+      .subscribe();
+    const provChannel = supabaseAdmin.channel(`visibility-prov-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_providers' }, () => load())
+      .subscribe();
+    return () => {
+      cancelled = true;
+      try { supabaseAdmin.removeChannel(secChannel); } catch {}
+      try { supabaseAdmin.removeChannel(provChannel); } catch {}
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -91,35 +110,68 @@ export default function VisibilityPanel() {
 
   const toggleItem = async (item: VisibilityItem) => {
     try {
-      const [type, key] = item.id.split('_');
-      const path = type === 'section' ? `sections/${key}/isActive` :
-        type === 'provider' ? `providers/${key}/isActive` :
-        `adminSettings/featureFlags/${key}`;
-      await update(ref(database), { [path]: !item.isVisible });
-      showToast(`تم ${!item.isVisible ? 'إظهار' : 'إخفاء'} ${item.name}`, 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
+      const newVisible = !item.isVisible;
+      if (item.type === 'section') {
+        const { error } = await supabaseAdmin.from('sections')
+          .update({ is_visible: newVisible, updated_at: new Date().toISOString() })
+          .eq('id', item.dbId);
+        if (error) throw error;
+      } else if (item.type === 'provider') {
+        const { error } = await supabaseAdmin.from('service_providers')
+          .update({ is_visible: newVisible, updated_at: new Date().toISOString() })
+          .eq('id', item.dbId);
+        if (error) throw error;
+      } else {
+        const { data: row } = await supabaseAdmin.from('app_config')
+          .select('value').eq('key', 'featureFlags').maybeSingle();
+        const cur: Record<string, boolean> = (row?.value as any) || {};
+        cur[item.dbId!] = newVisible;
+        const { error } = await supabaseAdmin.from('app_config')
+          .upsert({ key: 'featureFlags', value: cur, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        if (error) throw error;
+      }
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, isVisible: newVisible } : i));
+      showToast(`تم ${newVisible ? 'إظهار' : 'إخفاء'} ${item.name}`, 'success');
+    } catch (e: any) {
+      console.error('[toggleItem] error:', e);
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    }
   };
 
   const handleBulkUpdate = async () => {
     if (selectedIds.size === 0) { showToast('اختر عناصر أولاً', 'error'); return; }
     setSaving(true);
     try {
-      const updates: Record<string, boolean> = {};
+      const target = bulkAction === 'show';
+      const sectionIds: string[] = [];
+      const providerIds: string[] = [];
+      const featureIds: string[] = [];
       selectedIds.forEach(id => {
         const item = items.find(i => i.id === id);
-        if (item) {
-          const [type, key] = id.split('_');
-          const path = type === 'section' ? `sections/${key}/isActive` :
-            type === 'provider' ? `providers/${key}/isActive` :
-            `adminSettings/featureFlags/${key}`;
-          updates[path] = bulkAction === 'show';
-        }
+        if (!item || !item.dbId) return;
+        if (item.type === 'section') sectionIds.push(item.dbId);
+        else if (item.type === 'provider') providerIds.push(item.dbId);
+        else featureIds.push(item.dbId);
       });
-      await update(ref(database), updates);
+      const count = selectedIds.size;
+      if (sectionIds.length > 0) {
+        await supabaseAdmin.from('sections').update({ is_visible: target, updated_at: new Date().toISOString() }).in('id', sectionIds);
+      }
+      if (providerIds.length > 0) {
+        await supabaseAdmin.from('service_providers').update({ is_visible: target, updated_at: new Date().toISOString() }).in('id', providerIds);
+      }
+      if (featureIds.length > 0) {
+        const { data: row } = await supabaseAdmin.from('app_config').select('value').eq('key', 'featureFlags').maybeSingle();
+        const cur: Record<string, boolean> = (row?.value as any) || {};
+        featureIds.forEach(id => { cur[id] = target; });
+        await supabaseAdmin.from('app_config').upsert({ key: 'featureFlags', value: cur, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+      }
+      setItems(prev => prev.map(i => selectedIds.has(i.id) ? { ...i, isVisible: target } : i));
       setSelectedIds(new Set());
-      showToast(`تم ${bulkAction === 'show' ? 'إظهار' : 'إخفاء'} ${selectedIds.size} عنصر`, 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
-    finally { setSaving(false); }
+      showToast(`تم ${target ? 'إظهار' : 'إخفاء'} ${count} عنصر`, 'success');
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e.message || ''), 'error');
+    } finally { setSaving(false); }
   };
 
   const toggleSelect = (id: string) => {
@@ -143,7 +195,6 @@ export default function VisibilityPanel() {
         <p className="text-muted-foreground text-sm mt-1">التحكم في ظهور الأقسام والمزودين والميزات</p>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         {[
           { label: 'الإجمالي', value: stats.total },
@@ -159,7 +210,6 @@ export default function VisibilityPanel() {
         ))}
       </div>
 
-      {/* Bulk Actions */}
       <Card className="border-0 shadow-sm">
         <CardContent className="p-4">
           <div className="flex flex-wrap gap-3 items-center">
@@ -182,7 +232,6 @@ export default function VisibilityPanel() {
         </CardContent>
       </Card>
 
-      {/* Items List */}
       <div className="space-y-2 max-h-[calc(100vh-400px)] overflow-y-auto scrollbar-thin">
         {filtered.length === 0 ? (
           <Card className="border-0 shadow-sm"><CardContent className="p-12 text-center"><Eye className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" /><p className="text-muted-foreground">لا توجد عناصر</p></CardContent></Card>

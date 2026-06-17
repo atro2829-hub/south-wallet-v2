@@ -358,14 +358,24 @@ function AppContent() {
           PushNotifications.addListener('registration', async (token) => {
             console.log('Push registration success, token:', token.value);
             localStorage.setItem('notification-permission', 'granted');
-            // Save FCM token to Firebase
+            // Save FCM token directly to Supabase users.fcm_token (snake_case).
+            // The previous implementation went through db-compat which wrote
+            // to a camelCase `fcmToken` field that doesn't exist in the
+            // users table — so the token was silently dropped and push
+            // notifications never reached anyone.
             try {
-              const { database } = await import('@/lib/firebase');
-              const { ref, set: firebaseSet } = await import('@/lib/db-compat');
+              const { supabase } = await import('@/lib/supabase');
               const currentUser = useAppStore.getState().user;
               if (currentUser?.id) {
-                await firebaseSet(ref(database, `users/${currentUser.id}/fcmToken`), token.value);
-                console.log('FCM token saved to Firebase for user:', currentUser.id);
+                const { error: tokenErr } = await supabase
+                  .from('users')
+                  .update({ fcm_token: token.value, updated_at: new Date().toISOString() })
+                  .eq('id', currentUser.id);
+                if (tokenErr) {
+                  console.warn('Failed to persist FCM token to users.fcm_token:', tokenErr.message);
+                } else {
+                  console.log('FCM token saved to Supabase users.fcm_token for user:', currentUser.id);
+                }
               }
             } catch (e) {
               console.warn('Failed to save FCM token:', e);
@@ -437,13 +447,23 @@ function AppContent() {
 
               if (currentToken) {
                 console.log('Web FCM token:', currentToken);
-                // Save FCM token to Firebase
+                // Save FCM token directly to Supabase users.fcm_token (snake_case).
                 const currentUser = useAppStore.getState().user;
                 if (currentUser?.id) {
-                  const { database } = await import('@/lib/firebase');
-                  const { ref, set: firebaseSet } = await import('@/lib/db-compat');
-                  await firebaseSet(ref(database, `users/${currentUser.id}/fcmToken`), currentToken);
-                  console.log('Web FCM token saved for user:', currentUser.id);
+                  try {
+                    const { supabase } = await import('@/lib/supabase');
+                    const { error: tokenErr } = await supabase
+                      .from('users')
+                      .update({ fcm_token: currentToken, updated_at: new Date().toISOString() })
+                      .eq('id', currentUser.id);
+                    if (tokenErr) {
+                      console.warn('Failed to persist web FCM token:', tokenErr.message);
+                    } else {
+                      console.log('Web FCM token saved to Supabase users.fcm_token for user:', currentUser.id);
+                    }
+                  } catch (e) {
+                    console.warn('Failed to save web FCM token:', e);
+                  }
                 }
               }
 

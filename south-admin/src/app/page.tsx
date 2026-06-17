@@ -167,10 +167,18 @@ export default function AdminApp() {
 
           PushNotifications.addListener('registration', async (token) => {
             console.log('Admin push registration success:', token.value);
-            // Save FCM token to Firebase for admin
+            // Save FCM token directly to Supabase users.fcm_token (snake_case).
+            // The previous db-compat call wrote to a camelCase field that
+            // doesn't exist in the users table — so admin push notifications
+            // never reached admin devices.
             try {
-              const { ref, set: firebaseSet } = await import('@/lib/db-compat');
-              await firebaseSet(ref(database, `users/${adminUser.uid}/fcmToken`), token.value);
+              const { supabaseAdmin } = await import('@/lib/supabase');
+              const { error } = await supabaseAdmin
+                .from('users')
+                .update({ fcm_token: token.value, updated_at: new Date().toISOString() })
+                .eq('id', adminUser.uid);
+              if (error) console.warn('Failed to persist admin FCM token:', error.message);
+              else console.log('Admin FCM token saved to Supabase for:', adminUser.uid);
             } catch (e) {
               console.warn('Failed to save admin FCM token:', e);
             }
@@ -215,9 +223,17 @@ export default function AdminApp() {
               const currentToken = await getToken(messaging, { vapidKey });
 
               if (currentToken) {
-                const { ref, set: firebaseSet } = await import('@/lib/db-compat');
-                await firebaseSet(ref(database, `users/${adminUser.uid}/fcmToken`), currentToken);
-                console.log('Admin web FCM token saved');
+                try {
+                  const { supabaseAdmin } = await import('@/lib/supabase');
+                  const { error } = await supabaseAdmin
+                    .from('users')
+                    .update({ fcm_token: currentToken, updated_at: new Date().toISOString() })
+                    .eq('id', adminUser.uid);
+                  if (error) console.warn('Failed to persist admin web FCM token:', error.message);
+                  else console.log('Admin web FCM token saved to Supabase');
+                } catch (e) {
+                  console.warn('Failed to save admin web FCM token:', e);
+                }
               }
 
               onMessage(messaging, (payload) => {

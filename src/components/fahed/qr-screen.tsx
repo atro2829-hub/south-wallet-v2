@@ -138,6 +138,25 @@ export default function QRScreen() {
   const startScanning = useCallback(async () => {
     setCameraError('');
     try {
+      // Request camera permission explicitly before starting Html5Qrcode.
+      // On Capacitor Android, getUserMedia requires the permission to be
+      // granted at runtime — without this explicit request, Html5Qrcode
+      // would silently fail because the WebView would auto-deny.
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: useFrontCamera ? 'user' : 'environment' },
+          });
+          // Stop the test stream — Html5Qrcode will start its own.
+          stream.getTracks().forEach(t => t.stop());
+        } catch (permErr: any) {
+          console.warn('[qr] camera permission denied:', permErr);
+          setCameraError('تم رفض إذن الكاميرا. فعّل الإذن من إعدادات التطبيق.');
+          showToast('error', 'إذن الكاميرا', 'تم رفض إذن الكاميرا. فعّله من إعدادات التطبيق.');
+          return;
+        }
+      }
+
       // Clean up any existing scanner first
       if (scannerRef.current) {
         await stopScanning();
@@ -805,18 +824,33 @@ export default function QRScreen() {
                   border: `2px dashed ${isDark ? '#333' : '#DDD'}`,
                 }}
               >
-                {/* QR Reader container - hidden when not scanning */}
+                {/* QR Reader container — ALWAYS rendered so Html5Qrcode can
+                    attach to it when startScanning is called. Previously this
+                    div had `display: isScanning ? 'block' : 'none'`, which
+                    meant on the first call isScanning=false and the div was
+                    hidden, so Html5Qrcode silently failed to access the
+                    camera (no error shown — the screen just stayed black). */}
                 <div
                   id="qr-reader"
                   className="absolute inset-0 w-full h-full"
                   style={{
-                    display: isScanning ? 'block' : 'none',
+                    display: 'block',
+                    background: '#000',
                   }}
                 />
+                {/* Style overrides for Html5Qrcode's injected elements so the
+                    video fills the container and the scan region matches our UI. */}
+                <style>{`
+                  #qr-reader video { width: 100% !important; height: 100% !important; object-fit: cover; }
+                  #qr-reader__dashboard_section_csr button { background: #5C1A1B !important; color: #FFF !important; border: none !important; padding: 6px 12px !important; border-radius: 8px !important; font-size: 12px !important; }
+                  #qr-reader__dashboard_section_swaplink { display: none !important; }
+                  #qr-reader__header_message { display: none !important; }
+                  #qr-reader__dashboard_section_fsr { display: none !important; }
+                `}</style>
 
-                {/* Placeholder when not scanning */}
+                {/* Placeholder overlay when not scanning */}
                 {!isScanning && (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-4">
+                  <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-4" style={{ background: isDark ? 'rgba(15,15,15,0.95)' : 'rgba(255,255,255,0.95)' }}>
                     <div
                       className="w-20 h-20 rounded-full flex items-center justify-center"
                       style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}

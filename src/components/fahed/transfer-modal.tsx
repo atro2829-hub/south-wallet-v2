@@ -435,17 +435,42 @@ export default function TransferModal() {
         console.warn('Supabase transfer mirror failed (non-fatal):', supaErr);
       }
 
-      // Send FCM push notification to the recipient (works when app is closed)
+      // Send FCM push notification to the recipient (works when app is closed).
+      // Also persist an in-app notification so it shows in their notifications screen.
       try {
-        const recipientFcmToken = recipientData.fcmToken;
+        // recipientData is a Supabase users row (snake_case). Use fcm_token.
+        const recipientFcmToken = recipientData.fcm_token;
+        const recipientUid = recipientData.id;
+        const senderName = user?.name || user?.email || 'مستخدم';
+        const notifBody = `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderName}`;
+
+        // 1) Persist in-app notification via supabaseService (bypass RLS)
+        try {
+          const { supabaseService } = await import('@/lib/supabase');
+          await supabaseService.from('notifications').insert({
+            user_id: recipientUid,
+            title: 'تحويل وارد',
+            body: notifBody,
+            type: 'transaction',
+            is_read: false,
+            navigation_target: 'wallet',
+            data: { action: 'transfer_received', amount: effectiveAmount, currency, fromUserId: user?.id },
+          });
+        } catch (e) {
+          console.warn('[transfer] in-app notification insert failed (non-fatal):', e);
+        }
+
+        // 2) FCM push
         if (recipientFcmToken) {
           await sendFCMDirect(
             [recipientFcmToken],
             'تحويل وارد',
-            `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderData.name || ''}`,
+            notifBody,
             'transaction',
             { action: 'transfer_received', amount: effectiveAmount, currency },
           );
+        } else {
+          console.warn(`[transfer] recipient ${recipientUid} has no fcm_token — push skipped`);
         }
       } catch (pushError) {
         console.warn('FCM push to recipient failed (non-blocking):', pushError);
