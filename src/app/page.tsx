@@ -327,12 +327,14 @@ function AppContent() {
   }, [storeTheme, setTheme]);
 
   // Initialize Push Notifications (Capacitor native + Web FCM)
+  // We request permission as EARLY as possible — even before the user signs in —
+  // because Android 13+ requires explicit notification runtime permission and
+  // waiting until after login causes users to miss the very first push
+  // notifications (welcome, deposit confirmation, gift codes, etc.).
+  // On iOS/Web, Notification.requestPermission() is a no-op if already granted.
   useEffect(() => {
-    if (!isAuthenticated) return;
-
     const initPushNotifications = async () => {
       try {
-        // Check if running in Capacitor native environment
         const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
         const isNative = win.Capacitor && win.Capacitor.isNativePlatform && win.Capacitor.isNativePlatform();
 
@@ -494,6 +496,29 @@ function AppContent() {
     // Delay initialization to avoid interfering with app startup
     const timer = setTimeout(initPushNotifications, 3000);
     return () => clearTimeout(timer);
+  }, []); // Run once on mount — NOT gated on isAuthenticated.
+
+  // When the user signs in (or signs back in), persist their FCM token so the
+  // backend can route push notifications to them. This runs whenever the auth
+  // state changes; it complements the early-permission-request above.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const currentUser = useAppStore.getState().user;
+    if (!currentUser?.id) return;
+    // Best-effort: re-register the token. If permission was already granted,
+    // PushNotifications.register() is a no-op that simply re-emits the token.
+    (async () => {
+      try {
+        const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
+        const isNative = win.Capacitor?.isNativePlatform?.();
+        if (isNative) {
+          const { PushNotifications } = await import('@capacitor/push-notifications');
+          await PushNotifications.register();
+        }
+      } catch (e) {
+        console.warn('FCM token re-register on login failed (non-fatal):', e);
+      }
+    })();
   }, [isAuthenticated]);
 
   const handleSplashComplete = () => {
@@ -541,6 +566,34 @@ function AppContent() {
           </div>
           <div className="w-8 h-8 border-2 border-[#5C1A1B]/30 border-t-[#5C1A1B] rounded-full animate-spin" />
         </motion.div>
+      </div>
+    );
+  }
+
+  // ─── Maintenance mode check (HIGHEST PRIORITY — runs BEFORE splash / PIN / loading) ──
+  // This must come before EVERYTHING else (including splash, PIN, kill-switch, auth)
+  // so that when the admin activates maintenance, the maintenance screen replaces
+  // whatever the user is currently looking at — even mid-splash or mid-PIN entry.
+  //
+  // We also bypass it ONLY for the owner (so the founder can still log in to
+  // disable maintenance if needed). This is enforced client-side; the owner's
+  // email is the source of truth.
+  const currentUserEmail = (useAppStore.getState().user?.email || '').toLowerCase();
+  const isOwnerBypass = currentUserEmail === 'm775371829@gmail.com';
+  if (!isOwnerBypass && (maintenance?.active || featureFlags.maintenanceMode)) {
+    const maintenanceMessage = featureFlags.maintenanceMessage || maintenance?.message || '';
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)' }}>
+        <div className="flex flex-col items-center px-8 text-center">
+          <div className="w-20 h-20 rounded-3xl overflow-hidden flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.15)' }}>
+            <img src={LOGO_BASE64} alt="الجنوب" className="w-14 h-14 object-cover" />
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-3">صيانة مجدولة</h1>
+          <p className="text-white/70 text-sm leading-relaxed mb-2">{maintenanceMessage || 'التطبيق حالياً في وضع الصيانة'}</p>
+          {maintenance?.estimatedTime && (
+            <p className="text-white/50 text-xs">الوقت المتوقع للعودة: {maintenance.estimatedTime}</p>
+          )}
+        </div>
       </div>
     );
   }
@@ -608,29 +661,9 @@ function AppContent() {
     }
   }
 
-  // ─── Maintenance mode check (BEFORE auth check — locks ALL users) ──────
-  // This must come before the authentication check so that maintenance mode
-  // locks the entire app even for users who aren't logged in yet.
-  // Works in real-time: if admin activates maintenance while a user is in the
-  // app, the maintenance screen appears immediately.
-  // Check both the legacy maintenance object and the featureFlags.maintenanceMode
-  if (maintenance?.active || featureFlags.maintenanceMode) {
-    const maintenanceMessage = featureFlags.maintenanceMessage || maintenance?.message || '';
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)' }}>
-        <div className="flex flex-col items-center px-8 text-center">
-          <div className="w-20 h-20 rounded-3xl overflow-hidden flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.15)' }}>
-            <img src={LOGO_BASE64} alt="الجنوب" className="w-14 h-14 object-cover" />
-          </div>
-          <h1 className="text-2xl font-bold text-white mb-3">صيانة مجدولة</h1>
-          <p className="text-white/70 text-sm leading-relaxed mb-2">{maintenanceMessage || 'التطبيق حالياً في وضع الصيانة'}</p>
-          {maintenance?.estimatedTime && (
-            <p className="text-white/50 text-xs">الوقت المتوقع للعودة: {maintenance.estimatedTime}</p>
-          )}
-        </div>
-      </div>
-    );
-  }
+  // ─── (Maintenance check moved to top of render — before splash/PIN) ────
+  // The maintenance check now runs at the very top of the component so it
+  // intercepts EVERY phase (splash, PIN, loading, main). Do not re-check here.
 
   // ─── Force update check (BEFORE auth check — applies to ALL users) ─────
   if (forceUpdate?.active) {

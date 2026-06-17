@@ -237,12 +237,41 @@ async function apiRequest<T>(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`API error (${response.status}): ${errorText}`);
+    // Translate the most common provider-balance failure cases into clear Arabic
+    // messages so the user understands that the issue is on the provider's side,
+    // not their own wallet balance.
+    const status = response.status;
+    let userMessage = '';
+    const lower = errorText.toLowerCase();
+    if (status === 401 || status === 403) {
+      userMessage = 'مفتاح API الخاص بالمزود غير صالح أو منتهي الصلاحية. يرجى المحاولة لاحقاً.';
+    } else if (status === 402 || status === 406 || lower.includes('insufficient') || lower.includes('balance') || lower.includes('credit') || lower.includes('not enough')) {
+      userMessage = 'رصيد المزود غير كافٍ لإتمام هذه العملية حالياً. تم إعلام الإدارة، يرجى المحاولة لاحقاً.';
+    } else if (status === 429) {
+      userMessage = 'تم تجاوز الحد المسموح للطلبات على المزود. يرجى المحاولة بعد دقيقة.';
+    } else if (status >= 500) {
+      userMessage = 'خدمة المزود غير متاحة مؤقتاً. يرجى المحاولة لاحقاً.';
+    }
+    const err = new Error(userMessage || `API error (${status}): ${errorText}`);
+    (err as any).providerError = true;
+    (err as any).status = status;
+    (err as any).rawBody = errorText;
+    throw err;
   }
 
   const data = await response.json();
   if (data.success === false) {
-    throw new Error(data.message || data.detail?.message || 'API request failed');
+    // G2Bulk-style error: { success:false, message:'...' }
+    const msg: string = String(data.message || data.detail?.message || 'فشل الطلب من المزود');
+    const lower = msg.toLowerCase();
+    let userMessage = msg;
+    if (lower.includes('insufficient') || lower.includes('balance') || lower.includes('credit') || lower.includes('not enough')) {
+      userMessage = 'رصيد المزود غير كافٍ لإتمام هذه العملية حالياً. يرجى المحاولة لاحقاً.';
+    }
+    const err = new Error(userMessage);
+    (err as any).providerError = true;
+    (err as any).rawBody = data;
+    throw err;
   }
   return data as T;
 }

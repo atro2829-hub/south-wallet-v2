@@ -8,6 +8,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateGiftCode } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -172,6 +173,21 @@ export default function GiftCodesPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة أكواد الهدايا المالية"
+        intro="أنشئ أكواداً يربحها المستخدم عند إدخالها (مثل كود بقيمة 1000 ر.ي). مفيدة للعروض الترويجية، التعويضات، والهدايا بين المستخدمين."
+        steps={[
+          { title: 'إنشاء كود', description: 'اضغط "إنشاء كود". أدخل: القيمة بالعملة المختارة، تاريخ الانتهاء، عدد مرات الاستخدام (1 لمرة واحدة، أو أكثر للترويج).' },
+          { title: 'تخصيص لمستخدم', description: 'يمكنك تخصيص كود لمستخدم محدد بحيث لا يستخدمه غيره. مفيد للتعويضات الفردية.' },
+          { title: 'توزيع جماعي', description: 'أنشئ مجموعة أكواد (مثلاً 100 كود بقيمة 500 ر.ي) ل حملة ترويجية. صدّرها كـ CSV للتوزيع.' },
+          { title: 'تتبع الاستخدام', description: 'في تبويب "مستخدمة" سترى كل كود تم استخدامه مع اسم المستخدم وتاريخ الاستخدام.' },
+        ]}
+        tips={[
+          'حدّد دائماً تاريخ انتهاء — الأكواد الدائمة قد تُساء مستقبلاً.',
+          'لا تنشر أكواداً عالية القيمة بشكل عام — استخدم التخصيص الفردي.',
+          'راقب الاستخدام المتكرر من نفس الجهاز — قد يكون احتيالاً.',
+        ]}
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">أكواد الهدايا المالية</h1>

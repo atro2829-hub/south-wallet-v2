@@ -7,6 +7,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId, cn, formatDateAr } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -88,6 +89,21 @@ export default function ExchangeRatesPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة أسعار الصرف"
+        intro="أسعار الصرف بين الريال اليمني (YER) والريال السعودي (SAR) والدولار (USD). تُستخدم تلقائياً في كل التحويلات والمعاملات."
+        steps={[
+          { title: 'تحديث الأسعار', description: 'أدخل السعر الحالي لكل عملة مقابل الأخريات. مثلاً: 1 USD = 530 YER، 1 SAR = 141 YER.' },
+          { title: 'المزامنة التلقائية', description: 'يمكنك تفعيل التحديث التلقائي من مزود خارجي (مثل Yahoo Finance) كل ساعة. مفيد لتتبع السوق.' },
+          { title: 'هامش الصرافة', description: 'أضف نسبة هامش (مثلاً 2%) لكل عملية صرف. هذا يضمن ربحك من فروق العملات.' },
+          { title: 'حفظ التغييرات', description: 'اضغط "حفظ" — الأسعار الجديدة تُطبَّق فوراً على كل المعاملات الجديدة. المعاملات القديمة لا تُعاد تسويتها.' },
+        ]}
+        tips={[
+          'راجع الأسعار يومياً في حالة تقلب السوق.',
+          'لا تضع أسعاراً متباعدة جداً عن السوق — يضر بثقة المستخدم.',
+          'احفظ سجل تاريخي للأسعار للتحليل الشهري.',
+        ]}
+      />
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2"><DollarSign className="w-7 h-7 text-[#5C1A1B]" />أسعار الصرف</h1>
         <p className="text-muted-foreground text-sm mt-1">إدارة أسعار تحويل العملات</p>

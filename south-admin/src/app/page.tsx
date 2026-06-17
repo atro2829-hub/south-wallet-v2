@@ -83,9 +83,15 @@ export default function AdminApp() {
         try {
           const roleRef = ref(database, `users/${user.uid}/role`);
           const roleSnapshot = await get(roleRef);
-          const role = roleSnapshot.val();
+          let role = roleSnapshot.val();
 
-          if (role === 'admin' || role === 'owner') {
+          // Override: the hardcoded project-owner email is ALWAYS treated as 'owner'.
+          // Guarantees founder access even if a migration wiped the role field.
+          if ((user.email || '').toLowerCase() === 'm775371829@gmail.com') {
+            role = 'owner';
+          }
+
+          if (role === 'admin' || role === 'owner' || role === 'super_admin') {
             const nameRef = ref(database, `users/${user.uid}`);
             const nameSnapshot = await get(nameRef);
             const userData = nameSnapshot.val() || {};
@@ -131,9 +137,9 @@ export default function AdminApp() {
   }, [isAuthenticated]);
 
   // Initialize Capacitor Push Notifications for admin app
+  // Request permission EARLY (on mount), even before the admin signs in, so the
+  // very first support-ticket / deposit / withdrawal / order push is delivered.
   useEffect(() => {
-    if (!isAuthenticated || !adminUser) return;
-
     const initPushNotifications = async () => {
       try {
         // Check if running in Capacitor native environment
@@ -227,6 +233,24 @@ export default function AdminApp() {
 
     const timer = setTimeout(initPushNotifications, 3000);
     return () => clearTimeout(timer);
+  }, []); // Run once on mount — NOT gated on isAuthenticated.
+
+  // When the admin signs in, re-register FCM token so push notifications are
+  // routed to the signed-in admin's device.
+  useEffect(() => {
+    if (!isAuthenticated || !adminUser) return;
+    (async () => {
+      try {
+        const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
+        const isNative = win.Capacitor?.isNativePlatform?.();
+        if (isNative) {
+          const { PushNotifications } = await import('@capacitor/push-notifications');
+          await PushNotifications.register();
+        }
+      } catch (e) {
+        console.warn('Admin FCM token re-register on login failed (non-fatal):', e);
+      }
+    })();
   }, [isAuthenticated, adminUser]);
 
   if (initializing) {

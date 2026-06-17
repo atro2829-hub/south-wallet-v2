@@ -32,6 +32,8 @@ import { formatBalance, formatNumber, currencySymbols, currencyNames, currencyBa
 import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
 import { database } from '@/lib/firebase';
 import { ref, get, onValue } from '@/lib/db-compat';
+import { supabase } from '@/lib/supabase';
+import { fetchBannersForPosition, type Banner } from '@/components/fahed/home-screen';
 
 type FilterTab = 'all' | 'incoming' | 'outgoing' | 'orders' | 'deposit' | 'withdraw';
 
@@ -466,6 +468,18 @@ export default function WalletScreen() {
     setPullDistance(0);
   }, [pullDistance, isRefreshing, handleRefresh]);
 
+  // Wallet-position banner (admin-controlled via banners table position='wallet' or 'all')
+  const [banners, setBanners] = useState<Banner[]>([]);
+  useEffect(() => {
+    const load = async () => setBanners(await fetchBannersForPosition('wallet'));
+    load();
+    const channel = supabase
+      .channel(`banners-wallet-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'banners' }, () => load())
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, []);
+
   return (
     <div
       className="pb-4"
@@ -829,6 +843,32 @@ export default function WalletScreen() {
           />
         </div>
       </div>
+
+      {/* ─── Wallet Banner (admin-controlled via banners table position='wallet' or 'all') ─── */}
+      {banners.length > 0 && (
+        <div className="px-4 mt-3">
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            {banners.map((b) => (
+              <button
+                key={b.id}
+                onClick={() => b.link && window.open(b.link, '_blank')}
+                className="relative shrink-0 rounded-2xl overflow-hidden"
+                style={{ width: '100%', height: 80 }}
+              >
+                {b.imageUrl ? (
+                  <img src={b.imageUrl} alt={b.title} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-start justify-center px-4"
+                       style={{ background: 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)' }}>
+                    <span className="text-white text-sm font-bold">{b.title}</span>
+                    {b.description && <span className="text-white/70 text-xs mt-1">{b.description}</span>}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filter Pills */}
       <div className="px-4 mt-3">

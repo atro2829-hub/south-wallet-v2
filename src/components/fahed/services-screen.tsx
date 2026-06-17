@@ -20,6 +20,7 @@ import { useAppStore } from '@/lib/store';
 import { productIcons } from '@/lib/product-icons';
 import { serviceIcons } from '@/lib/service-icons';
 import { supabase, supabaseService } from '@/lib/supabase';
+import { fetchBannersForPosition, type Banner } from '@/components/fahed/home-screen';
 import { type DynamicSubSection } from '@/lib/categories';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -127,6 +128,18 @@ export default function ServicesScreen() {
   const [apiCategories, setApiCategories] = useState<any[]>([]);
   const [apiProvidersMap, setApiProvidersMap] = useState<Record<string, any>>({});
   const [dbProviders, setDbProviders] = useState<ProviderDisplay[]>([]);
+  const [banners, setBanners] = useState<Banner[]>([]);
+
+  // Fetch banners for the services position
+  useEffect(() => {
+    const load = async () => setBanners(await fetchBannersForPosition('services'));
+    load();
+    const channel = supabase
+      .channel(`banners-services-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'banners' }, () => load())
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, []);
 
   // ─── UI State ─────────────────────────────────────────────────────
 
@@ -967,6 +980,32 @@ export default function ServicesScreen() {
           )}
         </div>
       </motion.div>
+
+      {/* ─── Services Banner (admin-controlled via banners table position='services' or 'all') ─── */}
+      {banners.length > 0 && (
+        <div className="px-4 mt-2">
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            {banners.map((b) => (
+              <button
+                key={b.id}
+                onClick={() => b.link && window.open(b.link, '_blank')}
+                className="relative shrink-0 rounded-2xl overflow-hidden"
+                style={{ width: '100%', height: 96 }}
+              >
+                {b.imageUrl ? (
+                  <img src={b.imageUrl} alt={b.title} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-start justify-center px-4"
+                       style={{ background: 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)' }}>
+                    <span className="text-white text-sm font-bold">{b.title}</span>
+                    {b.description && <span className="text-white/70 text-xs mt-1">{b.description}</span>}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recently Used Services */}
       {!searchQuery.trim() && recentServiceItems && recentServiceItems.length > 0 && (

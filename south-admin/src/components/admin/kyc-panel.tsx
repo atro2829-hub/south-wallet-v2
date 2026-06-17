@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, XCircle, UserCheck, ZoomIn, X, CreditCard, FileText, Camera, Image as ImageIcon, Shield, Clock, CheckCircle, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { notifyKycStatus } from '@/lib/notifications';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 
 export default function KYCPanel() {
   const { adminUser, showToast, kycPendingUsers, dataLoaded } = useAdminStore();
@@ -104,6 +105,21 @@ export default function KYCPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية مراجعة طلبات التحقق من الهوية (KYC)"
+        intro="التحقق بالذكاء الاصطناعي معطّل. كل طلب يصلك مباشرة بعد رفع المستخدم للصور الثلاث (الوجه والظهر والسيلفي). أنت تراجع الصور وتقرر يدوياً."
+        steps={[
+          { title: 'مراجعة الطلبات المعلقة', description: 'في تبويب "معلّق" سترى كل المستخدمين الذين رفعوا وثائقهم بانتظار قرارك. اضغط على أي مستخدم لفتح تفاصيله.' },
+          { title: 'فحص الصور', description: 'ستظهر لك 3 صور: وجه البطاقة، خلفها، وصورة سيلفي للمستخدم. اضغط أي صورة لتكبيرها. تحقق من: وضوح الصورة، تطابق الاسم، صحة رقم البطاقة.' },
+          { title: 'الموافقة', description: 'إذا كانت الوثائق صحيحة اضغط "موافقة". سيصبح حالة المستخدم "موثّق" ويصله إشعار تلقائي. الموافقة لا رجعة فيها (تحتاج طلب إعادة من المستخدم).' },
+          { title: 'الرفض', description: 'إذا كانت الصور غير واضحة أو غير مطابقة اضغط "رفض" واكتب سبب الرفض (مثلاً: "الصورة غير واضحة، يرجى إعادة رفعها"). سيصلك الطلب مرة أخرى إذا أعاد المستخدم الرفع.' },
+        ]}
+        tips={[
+          'لا توافق على طلب إلا إذا تأكدت من هوية المستخدم — هذا يحمي من الاحتيال.',
+          'في حالة الشك، استخدم زر "تواصل مع المستخدم" في صفحة المستخدم لطلب صور إضافية.',
+          'الإحصائيات في الأعلى تُحدّث تلقائياً، لا حاجة لإعادة تحميل الصفحة.',
+        ]}
+      />
       {/* Image Preview Modal */}
       <AnimatePresence>
         {previewImage && (

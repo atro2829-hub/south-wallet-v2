@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Trash2, Edit, Layers, ArrowUp, ArrowDown, RotateCcw, Save, RefreshCw, Loader2 } from 'lucide-react';
@@ -219,6 +220,23 @@ export default function SectionsPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة الأقسام الرئيسية والفرعية"
+        intro="الأقسام هي المجموعات التي تظهر في شاشة القائمة بتطبيق المستخدم (مثل: شحن، ألعاب، فواتير، ترفيه). كل قسم يمكن أن يحتوي على أقسام فرعية وخدمات. يمكنك إنشاء قسم خاص بمزود API جديد وربط منتجاته به."
+        steps={[
+          { title: 'إنشاء قسم رئيسي', description: 'اضغط "إضافة قسم". املأ: الاسم بالعربية، الاسم بالإنجليزية، الأيقونة (اختر من القائمة)، نوع القسم (عادي / API / ترفيه)، الترتيب.' },
+          { title: 'ربط القسم بمزود API', description: 'عند اختيار نوع "API" ستظهر قائمة بالمزودين المُضافين. اختر واحداً (مثل G2Bulk) وستظهر منتجاته تلقائياً داخل هذا القسم. كل قسم يمكن أن يرتبط بمزود واحد فقط.' },
+          { title: 'إضافة قسم فرعي', description: 'افتح قسماً رئيسياً واضغط "إضافة قسم فرعي". مثال: داخل قسم "الترفيه" يمكنك إنشاء أقسام فرعية: "ببجي"، "فري فاير"، "كول أوف ديوتي".' },
+          { title: 'الترتيب والإظهار', description: 'استخدم الأسهم لأعلى/أسفل لإعادة الترتيب. مفتاح "إظهار" يخفي القسم مؤقتاً دون حذفه — مفيد للمواسم.' },
+          { title: 'ربط الخدمات', description: 'بعد إنشاء القسم، اذهب لـ "المزودون والخدمات" لربط خدمات محددة بكل قسم فرعي.' },
+        ]}
+        tips={[
+          'لا تكثر من الأقسام الرئيسية — 6-8 أقسام مثالي للتجربة المستخدم.',
+          'استخدم أيقونات واضحة ومتناسقة بصرياً.',
+          'الأقسام المخفية لا تُحذف — يمكنك إظهارها مجدداً في أي وقت.',
+          'عند تغيير ترتيب قسم، ينعكس فوراً على تطبيق المستخدم بفضل Realtime.',
+        ]}
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">إدارة الأقسام</h1>

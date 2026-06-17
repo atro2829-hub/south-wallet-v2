@@ -8,6 +8,7 @@ import { formatNumber, currencySymbols, generateId, cn, formatDateAr, timeAgo } 
 import { notifyWithdrawStatus } from '@/lib/notifications';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -98,6 +99,21 @@ export default function WithdrawPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية معالجة طلبات السحب"
+        intro="عندما يطلب مستخدم سحب رصيده (تحويل لنقله لحساب بنكي أو مكتب صرافة)، يصلك الطلب هنا. أنت تنفّذ التحويل فعلياً ثم تؤكد."
+        steps={[
+          { title: 'مراجعة الطلبات', description: 'كل طلب يحتوي: المستخدم، المبلغ، العملة، رقم الحساب الوجهة، واسم المستفيد. تأكد من اكتمال البيانات.' },
+          { title: 'تنفيذ التحويل', description: 'حوّل المبلغ من حسابك البنكي إلى حساب المستخدم. احتفظ برقم مرجع التحويل.' },
+          { title: 'الموافقة', description: 'اضغط "موافقة" — يُخصم المبلغ من رصيد المستخدم ويصله إشعار بنجاح السحب.' },
+          { title: 'الرفض', description: 'إذا كانت بيانات الحساب خاطئة أو رصيد المستخدم غير كافٍ، اضغط "رفض" مع السبب. لا يُخصم شيء.' },
+        ]}
+        tips={[
+          'لا توافق قبل تنفيذ التحويل فعلياً — قد يطالب المستخدم لاحقاً.',
+          'احتفظ بسجلات التحويل لمدة سنة على الأقل للمراجعة.',
+          'راجع حدود السحب اليومية في "إعدادات > حدود المعاملات".',
+        ]}
+      />
       {/* Image Preview */}
       <AnimatePresence>
         {previewImage && (

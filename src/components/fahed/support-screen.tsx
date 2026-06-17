@@ -13,6 +13,7 @@ import { useAppStore, type SupportTicket } from '@/lib/store';
 import { timeAgo, generateReference, compressBase64Image, faqItems } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/fahed/toast-provider';
+import { notifySupportTicketCreated, notifySupportTicketReply } from '@/lib/notifications';
 
 type SupportView = 'main' | 'ticket-detail' | 'create-ticket';
 type MainTab = 'faq' | 'tickets' | 'chat';
@@ -416,6 +417,14 @@ export default function SupportScreen() {
         createdAt: new Date().toISOString(),
       });
 
+      // Push-notify the admin team so they can respond promptly.
+      // This is fire-and-forget; a failure here should not break ticket creation.
+      try {
+        await notifySupportTicketCreated(user.id, user.name || 'مستخدم', ticketData.id, newSubject, newCategory);
+      } catch (e) {
+        console.warn('notifySupportTicketCreated failed (non-fatal):', e);
+      }
+
       setNewSubject('');
       setNewMessage('');
       setNewImage('');
@@ -452,6 +461,13 @@ export default function SupportScreen() {
       const newMsg: TicketMessage = { sender: 'user', text: messageText, time: new Date().toISOString() };
       setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
       setMessageInput('');
+
+      // Push-notify admins of the user's reply so they can respond quickly.
+      try {
+        await notifySupportTicketReply(user.id, user.name || 'مستخدم', selectedTicket.id, messageText);
+      } catch (e) {
+        console.warn('notifySupportTicketReply failed (non-fatal):', e);
+      }
     } catch (e) {
       console.error('Failed to send message:', e);
       showToast('error', 'خطأ', 'فشل إرسال الرسالة، حاول مرة أخرى');

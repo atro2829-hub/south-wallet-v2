@@ -7,6 +7,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatBalance, formatNumber, currencySymbols, timeAgo, generateId, formatDateAr, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -206,6 +207,22 @@ export default function UsersPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة المستخدمين"
+        intro="كل المستخدمين المسجّلين في المحفظة يظهرون هنا. يمكنك تعديل الأرصدة، التحقق من الهوية، تعطيل/تفعيل الحسابات، وتغيير الأدوار."
+        steps={[
+          { title: 'البحث والفلترة', description: 'ابحث بالاسم، البريد، رقم البطاقة، أو الهاتف. الفلاتر: نشط، موقوف، موثّق، معلّق KYC.' },
+          { title: 'تعديل الرصيد', description: 'افتح ملف المستخدم واضغط "تعديل الرصيد". أدخل المبلغ والسبب (إيداع يدوي، تسوية، حذف خطأ). كل تعديل يُسجَّل في سجل النشاط.' },
+          { title: 'تعطيل/تفعيل', description: 'بدّل حالة الحساب. الحساب الموقوف لا يمكنه الدخول للتطبيق. مفيد للمستخدمين المخالفين.' },
+          { title: 'تغيير الدور', description: 'يمكن للمالك فقط ترقية مستخدم لمدير أو موظف. الأدوار: مستخدم، مدير، مالك.' },
+          { title: 'توثيق يدوي', description: 'يمكنك توثيق هوية مستخدم يدوياً إذا كان موثوقاً دون الحاجة لرفع وثائق.' },
+        ]}
+        tips={[
+          'لا تعدّل رصيد مستخدم دون سبب موثّق — يُسجَّل كل تعديل باسمك.',
+          'عند تعطيل حساب، أرسل إشعاراً للمستخدم يشرح السبب.',
+          'راجع قائمة المستخدمين الموقوفين شهرياً لإعادة التفعيل إن لزم.',
+        ]}
+      />
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>

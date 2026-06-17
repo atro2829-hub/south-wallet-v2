@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Send, Search, Headphones, Ticket, CheckCircle, Loader2, RefreshCw } from 'lucide-react';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 
 interface TicketWithUser extends DbSupportTicket {
   user_name?: string;
@@ -170,6 +171,22 @@ export default function SupportTicketsPanel() {
 
   return (
     <div className="space-y-4">
+      <AdminHelpBox
+        title="كيفية التعامل مع تذاكر الدعم الفني"
+        intro="تصل هنا كل التذاكر التي يفتحها المستخدمون من شاشة الدعم في التطبيق. يصلك إشعار push تلقائي عند إنشاء تذكرة جديدة أو رد المستخدم على تذكرة قائمة."
+        steps={[
+          { title: 'مراجعة التذاكر المفتوحة', description: 'التبويب "مفتوحة" يعرض التذاكر التي لم تُعالج بعد. اضغط أي تذكرة لفتح المحادثة الكاملة ومشاهدة الصور المرفقة.' },
+          { title: 'الرد على المستخدم', description: 'اكتب ردك في الأسفل واضغط "إرسال". يصل المستخدم إشعار push فوري. يمكنك إرفاق صورة (مثلاً لقطة شاشة توضيحية).' },
+          { title: 'تغيير الحالة', description: 'بدّل الحالة: "قيد المعالجة" أثناء العمل، "تم الحل" عند الانتهاء، "مغلقة" إذا رُفضت. المستخدم يرى الحالة محدّثة فوراً.' },
+          { title: 'تصعيد الأولوية', description: 'استخدم حقل الأولوية (منخفضة/متوسطة/عالية/عاجلة) لتنظيم العمل. التذاكر العاجلة تظهر بلون مميز.' },
+          { title: 'تحويل لموظف آخر', description: 'في "الموظفون" يمكنك تحويل التذكرة لموظف دعم آخر متخصص في القضية.' },
+        ]}
+        tips={[
+          'الرد السريع (أقل من ساعة) يزيد رضا المستخدمين بشكل كبير.',
+          'لا تنسَ إغلاق التذاكر بعد الحل — الإحصائيات تعتمد على ذلك.',
+          'إذا تكرر نفس السؤال من مستخدمين كثر، فكر في إضافته لقسم الأسئلة الشائعة في تطبيق المستخدم.',
+        ]}
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">تذاكر الدعم</h1>

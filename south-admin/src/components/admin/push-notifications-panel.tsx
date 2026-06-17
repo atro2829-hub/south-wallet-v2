@@ -7,6 +7,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatNumber, formatDateAr, generateId, cn, timeAgo } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
@@ -124,6 +125,22 @@ export default function PushNotificationsPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إرسال الإشعارات العامة"
+        intro="أرسل إشعارات push لكل المستخدمين أو شريحة محددة. الإشعارات تصل فوراً لأجهزة Android و iOS حتى لو كان التطبيق مغلقاً."
+        steps={[
+          { title: 'تكوين الإشعار', description: 'اكتب العنوان (قصير، أقل من 50 حرف)، النص (أقل من 200 حرف)، واختر نوع الإشعار (معلومات، تحذير، ترويجي).' },
+          { title: 'استهداف الجمهور', description: 'اختر: جميع المستخدمين، مستخدمو عملة معينة، مستخدمون في محافظة، أو مستخدم محدد بالمعرف.' },
+          { title: 'التنقل', description: 'اختر الشاشة التي تفتح عند الضغط على الإشعار: الرئيسية، الإيداع، الطلبات، قسم معين، URL خارجي.' },
+          { title: 'الإرسال', description: 'اضغط "إرسال" — يُرسل الإشعار فوراً. للإشعارات الكبيرة (>10,000) قد يستغرق وصولها 1-5 دقائق.' },
+          { title: 'الجدولة', description: 'يمكنك جدولة الإشعار ليُرسل في وقت لاحق (مثلاً: عرض جمعة في الساعة 10 صباحاً).' },
+        ]}
+        tips={[
+          'لا ترسل أكثر من 2-3 إشعارات يومياً — كثرتها تُزعج المستخدمين.',
+          'اختبر الإشعار على نفسك أولاً قبل الإرسال العام.',
+          'استخدم التنقل الذكي ليصل المستخدم مباشرة للعرض المذكور.',
+        ]}
+      />
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2"><Send className="w-7 h-7 text-[#5C1A1B]" />دفع الإشعارات</h1>
         <p className="text-muted-foreground text-sm mt-1">إرسال إشعارات فورية للمستخدمين</p>

@@ -89,6 +89,46 @@ interface Banner {
   order: number;
   url?: string;
   link?: string;
+  position?: string;
+}
+
+/**
+ * Fetch the active banners for a specific screen position.
+ * The admin can pick 'home' | 'services' | 'wallet' | 'login' | 'all'.
+ * 'all' banners are returned for every position so the admin can show a
+ * sitewide campaign from a single setting.
+ */
+export async function fetchBannersForPosition(position: 'home' | 'services' | 'wallet' | 'login'): Promise<Banner[]> {
+  const { data, error } = await supabase
+    .from('banners')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true });
+  if (error) {
+    console.error(`[banners] fetch error for position=${position}:`, error);
+    return [];
+  }
+  const now = new Date();
+  return (data || [])
+    .filter((b: any) => {
+      // Honor start/end date if set
+      const start = b.start_date ? new Date(b.start_date) : null;
+      const end = b.end_date ? new Date(b.end_date) : null;
+      if (start && now < start) return false;
+      if (end && now > end) return false;
+      // Position match: 'all' shows everywhere
+      return b.position === 'all' || b.position === position;
+    })
+    .map((b: any) => ({
+      id: b.id,
+      title: b.title || '',
+      description: b.description || '',
+      imageUrl: b.image_url || '',
+      isActive: b.is_active ?? true,
+      order: b.sort_order ?? 0,
+      link: b.link_target || b.link || undefined,
+      position: b.position,
+    }));
 }
 
 function hexToRgb(hex: string): string {
@@ -371,27 +411,7 @@ export default function HomeScreen() {
   // Supabase banners listener
   useEffect(() => {
     const fetchBanners = async () => {
-      const { data, error } = await supabase
-        .from('banners')
-        .select('*')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-
-      if (error) {
-        console.error('Supabase banners error:', error);
-        setBanners([]);
-        return;
-      }
-
-      const bannersList: Banner[] = (data || []).map((b: any) => ({
-        id: b.id,
-        title: b.title || '',
-        description: b.description || '',
-        imageUrl: b.image_url || '',
-        isActive: b.is_active ?? true,
-        order: b.sort_order ?? 0,
-        link: b.link_target || b.link || undefined,
-      }));
+      const bannersList = await fetchBannersForPosition('home');
       setBanners(bannersList);
       setBannerIndex(0);
     };

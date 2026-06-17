@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
@@ -235,6 +236,21 @@ export default function G2BulkPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية استخدام لوحة G2Bulk"
+        intro="G2Bulk هو مزود رئيسي للشحن والألعاب والباقات. هذه اللوحة مخصصة لإدارة التكامل معه بشكل تفصيلي."
+        steps={[
+          { title: 'إعداد API Key', description: 'في "إعدادات API" أدخل مفتاح G2Bulk. اختبر الاتصال بضغط "اختبار" — يجب أن يعيد رصيد حسابك.' },
+          { title: 'مزامنة المنتجات', description: 'اضغط "مزامنة" لجلب كل المنتجات والتصنيفات والألعاب. قد تستغرق المزامنة 1-3 دقائق.' },
+          { title: 'مراقبة الرصيد', description: 'الرصيد الحالي يظهر في الأعلى. اضغط "تحديث" لجلب آخر قيمة. التنبيه يظهر عند الانخفاض عن 50$.' },
+          { title: 'سجل الطلبات', description: 'كل طلبات G2Bulk تُسجَّل مع رقم الطلب، الحالة، التكلفة. يمكنك إعادة المحاولة للطلبات الفاشلة.' },
+        ]}
+        tips={[
+          'أضف رصيداً كافياً في حساب G2Bulk لتجنب فشل الطلبات في أوقات الذروة.',
+          'فعّل المزامنة التلقائية يومياً للحصول على المنتجات والأسعار الجديدة.',
+          'تواصل مع دعم G2Bulk مباشرة لأي مشكلة في الطلبات الكبيرة.',
+        ]}
+      />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

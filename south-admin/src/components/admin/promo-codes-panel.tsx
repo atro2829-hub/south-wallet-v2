@@ -7,6 +7,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateGiftCode } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -81,6 +82,21 @@ export default function PromoCodesPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة أكواد الخصم"
+        intro="أكواد الخصم تُعطي المستخدم تخفيضاً على الخدمات أو المنتجات (مثلاً: KSA20 = خصم 20% على كل خدمات السعودية)."
+        steps={[
+          { title: 'إنشاء كود خصم', description: 'حدد: الكود (إنجليزي، أرقام فقط)، نوع الخصم (نسبة % أو مبلغ ثابت)، القيمة، الحد الأقصى للاستخدام.' },
+          { title: 'تطبيق على خدمات محددة', description: 'اختر إن كان الكود ساري على: كل الخدمات، قسم معين، مزود معين، أو منتج معين.' },
+          { title: 'حدود الاستخدام', description: 'حدد: عدد مرات الاستخدام الإجمالي، عدد مرات الاستخدام لكل مستخدم، الحد الأدنى للطلب، الحد الأقصى للخصم.' },
+          { title: 'جدولة العرض', description: 'حدد تاريخ البداية والنهاية. الكود يصبح غير صالح تلقائياً بعد انتهاء الفترة.' },
+        ]}
+        tips={[
+          'استخدم أكواداً قصيرة وسهلة الحفظ (مثلاً: WEEKEND15).',
+          'لا تخلط النسبة والمبلغ — اختر أسلوباً واحداً لكل كود.',
+          'تتبع أداء كل كود لتقييم الحملات الترويجية مستقبلاً.',
+        ]}
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">أكواد الخصم والعروض</h1>

@@ -531,9 +531,14 @@ function GamePurchaseView({
         });
       }
     } catch (error: any) {
+      // If the error already has a translated Arabic message from apiRequest
+      // (providerError flag), surface it verbatim. Otherwise, wrap generically.
+      const message = error?.providerError
+        ? error.message
+        : `فشل الشراء: ${error.message}`;
       onOrderResult({
         success: false,
-        message: `فشل الشراء: ${error.message}`,
+        message,
       });
     } finally {
       setPurchasing(false);

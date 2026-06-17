@@ -7,6 +7,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId, cn, formatDateAr, timeAgo } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -99,6 +100,21 @@ export default function DepositPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية معالجة طلبات الإيداع"
+        intro="عندما يطلب مستخدم إيداع رصيد (عبر تحويل بنكي أو إيداع نقدي)، يصلك الطلب هنا مع صورة الإيصال. أنت تتحقق من وصول المبلغ فعلياً في حسابك ثم توافق أو ترفض."
+        steps={[
+          { title: 'مراجعة الطلبات المعلقة', description: 'كل طلب جديد يظهر في تبويب "معلّق" مع اسم المستخدم، المبلغ، العملة، وصورة الإيصال. اضغط الصورة لتكبيرها.' },
+          { title: 'التحقق من الحساب البنكي', description: 'افتح حسابك البنكي (المُسجّل في قسم "الحسابات البنكية") وتأكد من وصول المبلغ. تأكد من تطابق المبلغ والتاريخ.' },
+          { title: 'الموافقة', description: 'اضغط "موافقة" — يُضاف المبلغ تلقائياً لرصيد المستخدم ويصله إشعار push وتسجيل في سجل المعاملات.' },
+          { title: 'الرفض', description: 'إذا لم يصل المبلغ اضغط "رفض" مع سبب واضح. لا يُخصم شيء من المستخدم.' },
+        ]}
+        tips={[
+          'لا توافق قبل التأكد الفعلي من وصول المبلغ — قد يكون الإيصال مزوّراً.',
+          'في حالات الاشتباه، تواصل مع المستخدم أولاً عبر الدعم الفني.',
+          'الإيداعات الكبيرة (فوق 100,000 ر.ي) تستحق مراجعة مزدوجة.',
+        ]}
+      />
       {/* Image Preview */}
       <AnimatePresence>
         {previewImage && (

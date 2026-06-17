@@ -9,6 +9,7 @@ import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject }
 
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -664,6 +665,22 @@ export default function BannersPanel() {
 
   return (
     <div className="space-y-6" dir="rtl">
+      <AdminHelpBox
+        title="كيفية إدارة البانرات الإعلانية"
+        intro="البانرات تظهر للمستخدمين في 4 شاشات: الرئيسية، الخدمات، المحفظة، وشاشة الدخول. يمكنك إنشاء حملة إعلانية واحدة وعرضها في كل الشاشات بتحديد الموضع = 'الكل'."
+        steps={[
+          { title: 'إضافة بانر', description: 'اضغط "إضافة بانر جديد" ثم ارفع صورة (يفضّل 1200×400 بكسل، أقل من 200KB).' },
+          { title: 'تحديد الموضع', description: 'اختر أين يظهر: الرئيسية، الخدمات، المحفظة، الدخول، أو الكل (يظهر في كل الشاشات).' },
+          { title: 'نوع الرابط', description: 'اختر "بدون" لبانر إعلاني صرف، أو "رابط URL" لفتح موقع خارجي، أو "شاشة داخلية" للتنقل داخل التطبيق.' },
+          { title: 'جدولة العرض', description: 'حدّد تاريخ البداية والنهاية ليظهر البانر تلقائياً في الفترة المحددة ثم يختفي. مفيد للحملات الموسمية.' },
+          { title: 'الترتيب', description: 'في sort_order ضع رقماً — الأصغر يظهر أولاً. البانرات النشطة فقط تُعرض.' },
+        ]}
+        tips={[
+          'استخدم صوراً بلا نص مكتوب على الجوانب — قد تُقص في الشاشات الصغيرة.',
+          'اختبر البانر على جوال حقيقي قبل تفعيله لكل المستخدمين.',
+          'لا تكثر من البانرات في الشاشة الواحدة — 1-2 بانر يكفي، أكثر من ذلك يُزعج المستخدم.',
+        ]}
+      />
       {/* ===== Header ===== */}
       <div className="flex items-center justify-between">
         <div>

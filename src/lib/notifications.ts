@@ -381,3 +381,45 @@ export async function notifyWithdrawStatus(userId: string, amount: number, curre
     data: { action: 'withdraw_status', amount, currency, status },
   });
 }
+
+/**
+ * Send notification to admin when a user creates a support ticket.
+ * This was missing — admin had no push notification when users opened tickets.
+ */
+export async function notifySupportTicketCreated(
+  userId: string,
+  userName: string,
+  ticketId: string,
+  subject: string,
+  category: string,
+): Promise<void> {
+  await sendNotificationToAdmin({
+    title: 'تذكرة دعم فني جديدة',
+    body: `${userName}: ${subject} (${category})`,
+    type: 'support',
+    category: 'support',
+    navigationTarget: 'support_tickets',
+    navigationParams: { ticketId },
+    data: { action: 'support_ticket_created', userId, ticketId, subject, category },
+  });
+}
+
+/**
+ * Send notification to admin when a user sends a new message on an existing ticket.
+ */
+export async function notifySupportTicketReply(
+  userId: string,
+  userName: string,
+  ticketId: string,
+  messagePreview: string,
+): Promise<void> {
+  await sendNotificationToAdmin({
+    title: 'رد جديد على تذكرة دعم',
+    body: `${userName}: ${messagePreview.slice(0, 80)}${messagePreview.length > 80 ? '…' : ''}`,
+    type: 'support',
+    category: 'support',
+    navigationTarget: 'support_tickets',
+    navigationParams: { ticketId },
+    data: { action: 'support_ticket_reply', userId, ticketId },
+  });
+}

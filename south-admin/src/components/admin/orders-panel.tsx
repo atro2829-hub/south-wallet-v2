@@ -8,6 +8,7 @@ import { formatNumber, currencySymbols, timeAgo, generateId, cn, formatDateAr } 
 import { notifyOrderStatus } from '@/lib/notifications';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -106,6 +107,21 @@ export default function OrdersPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة الطلبات"
+        intro="هنا تظهر كل الطلبات التي ينفّذها المستخدمون (شحن، باقات، ألعاب، خدمات). الطلبات التلقائية عبر API تُنفَّذ فوراً، أما الطلبات اليدوية فتحتاج موافقتك."
+        steps={[
+          { title: 'متابعة الطلبات', description: 'التبويبات: الكل، مكتمل، قيد التنفيذ، فاشل، ملغى. كل طلب يظهر مع حالته والمبلغ والمستخدم.' },
+          { title: 'الطلبات الفاشلة', description: 'إذا فشل طلب API، يظهر هنا بلون أحمر. اضغط عليه لرؤية سبب الفشل. يمكنك إعادة المحاولة يدوياً بعد حل المشكلة.' },
+          { title: 'استرجاع المبلغ', description: 'للطلبات الفاشلة، اضغط "استرجاع" لإعادة المبلغ للمستخدم. سجِّل السبب للمراجعة.' },
+          { title: 'تعديل الحالة', description: 'يمكنك تغيير الحالة يدوياً للحالات الاستثنائية (مثلاً: تم التنفيذ خارج النظام).' },
+        ]}
+        tips={[
+          'لا تتجاهل الطلبات الفاشلة — المستخدم ينتظر حلاً.',
+          'استخدم الفلاتر للبحث عن طلب محدد بالمستخدم أو التاريخ.',
+          'صدّر تقرير الطلبات شهرياً للمحاسبة.',
+        ]}
+      />
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2"><ShoppingCart className="w-7 h-7 text-[#5C1A1B]" />الطلبات</h1>
         <p className="text-muted-foreground text-sm mt-1">إدارة ومعالجة طلبات الخدمات</p>

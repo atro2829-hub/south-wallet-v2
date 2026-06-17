@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -204,6 +205,22 @@ export default function SettingsPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة الإعدادات العامة"
+        intro="هذا القسم يجمع كل الإعدادات الحساسة: وضع الصيانة، التحويلات، الإيداع، السحب، الباقات، الاستثمار، والميزات التجريبية. كل تغيير يُحفظ فوراً ويؤثر على كل المستخدمين."
+        steps={[
+          { title: 'وضع الصيانة', description: 'فعّل المفتاح لإغلاق التطبيق على كل المستخدمين (باستثناء حسابك أنت كمالك). اكتب رسالة بالعربية تشرح سبب الصيانة ووقت العودة المتوقع.' },
+          { title: 'التحويلات/الإيداع/السحب', description: 'إيقاف أي ميزة يخفيها فوراً من تطبيق المستخدم. مفيد عند وجود مشكلة في المزود أو الصيانة الطارئة.' },
+          { title: 'اللون الرئيسي', description: 'غيّر لون التطبيق الأساسي (hex). ينعكس على الأزرار، الهيدر، والبطاقات. استخدم لوناً متوافقاً مع هوية العلامة.' },
+          { title: 'حدود المعاملات', description: 'حدّد الحد الأقصى للتحويلة الواحدة واليومي. تجاوزها يمنع المستخدم من الإرسال ويظهر رسالة توضيحية.' },
+          { title: 'حفظ التغييرات', description: 'كل تبويب له زر "حفظ" مستقل. لا تنسَ الضغط عليه بعد أي تعديل وإلا لن يُطبَّق.' },
+        ]}
+        tips={[
+          'قبل تفعيل الصيانة، أعلن للمستخدمين في إشعار عام لتجنب الشكاوى.',
+          'لا توقف التحويلات لفترة طويلة — يؤثر على ثقة المستخدمين.',
+          'اختبر أي لون جديد على شاشة واحدة قبل تطبيقه على الكل.',
+        ]}
+      />
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2"><SettingsIcon className="w-7 h-7 text-[#5C1A1B]" />الإعدادات</h1>
         <p className="text-muted-foreground text-sm mt-1">إعدادات النظام العامة</p>

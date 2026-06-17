@@ -29,6 +29,8 @@ import { useAppStore } from '@/lib/store';
 import { governorates, cardTypes } from '@/lib/utils';
 import { useToast } from '@/components/fahed/toast-provider';
 import ImageUpload from '@/components/fahed/image-upload';
+import { supabase } from '@/lib/supabase';
+import { sendNotificationToAdmin } from '@/lib/notifications';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -176,9 +178,18 @@ export default function KYCScreen() {
     }
   };
 
-  // ─── AI Verification ─────────────────────────────────────────────
+  // ─── AI Verification DISABLED ─────────────────────────────────────
+  // The previous implementation called a dev-only proxy endpoint
+  // (/verify?XTransformPort=3035) that does not exist in production builds.
+  // Per product decision, KYC is now 100% manual: the user uploads the
+  // three images, the request is saved to Supabase, and an admin reviews
+  // the attached images in the admin app's KYC panel.
+  //
+  // We keep the function signature so the rest of the component (which calls
+  // verifyDocument after each upload) doesn't need to be rewritten. It just
+  // marks the upload as "success" so the user can proceed to the next step.
 
-  const verifyDocument = async (imageUrl: string, documentType: 'id_front' | 'id_back' | 'selfie') => {
+  const verifyDocument = async (_imageUrl: string, documentType: 'id_front' | 'id_back' | 'selfie') => {
     const setStatusMap = {
       id_front: setIdFrontStatus,
       id_back: setIdBackStatus,
@@ -190,47 +201,23 @@ export default function KYCScreen() {
       selfie: setSelfieVerification,
     };
 
-    setStatusMap[documentType]('verifying');
-
-    try {
-      const response = await fetch('/verify?XTransformPort=3035', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageUrl, documentType }),
-      });
-
-      const data: VerificationResult = await response.json();
-
-      if (data.success && data.isValid && data.confidence >= 70) {
-        setStatusMap[documentType]('success');
-      } else if (data.success && data.confidence >= 50) {
-        setStatusMap[documentType]('warning');
-      } else if (data.success) {
-        setStatusMap[documentType]('failed');
-      } else {
-        setStatusMap[documentType]('error');
-      }
-
-      setResultMap[documentType](data);
-    } catch {
-      setStatusMap[documentType]('error');
-      setResultMap[documentType]({
-        success: false,
-        documentType,
-        isValid: false,
-        confidence: 0,
-        checks: [],
-        overallAssessment: 'حدث خطأ في الاتصال بخدمة التحقق',
-        error: 'Network error',
-      });
-    }
+    // Mark as accepted pending manual admin review. No AI call.
+    setStatusMap[documentType]('success');
+    setResultMap[documentType]({
+      success: true,
+      documentType,
+      isValid: true,
+      confidence: 100,
+      checks: [],
+      overallAssessment: 'تم رفع الصورة بنجاح، بانتظار المراجعة اليدوية من الإدارة',
+    });
   };
 
   // ─── Upload Handlers ─────────────────────────────────────────────
 
   const handleIdFrontUpload = useCallback(async (url: string) => {
     setIdFrontUrl(url);
-    // Auto-verify after upload
+    // Mark as accepted pending manual admin review.
     await verifyDocument(url, 'id_front');
   }, []);
 
@@ -253,47 +240,77 @@ export default function KYCScreen() {
     setError('');
 
     try {
-      const response = await fetch('/submit?XTransformPort=3035', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.id,
-          cardType,
-          cardNumber,
-          cardIssuedAt,
-          governorate,
-          nationalId: cardNumber,
-          idFrontUrl,
-          idBackUrl,
-          selfieUrl,
-          verificationResults: {
-            id_front: idFrontVerification,
-            id_back: idBackVerification,
-            selfie: selfieVerification,
-          },
-        }),
-      });
+      // 1) Save the three documents to the kyc_documents table.
+      //    Status starts as 'pending' — an admin will manually review and
+      //    approve/reject each one from the admin app's KYC panel.
+      const docsToInsert = [
+        { document_type: 'national_id_front', document_url: idFrontUrl },
+        { document_type: 'national_id_back',  document_url: idBackUrl },
+        { document_type: 'selfie',            document_url: selfieUrl },
+      ].filter(d => d.document_url);
 
-      const data = await response.json();
-
-      if (data.success) {
-        setSuccess(true);
-        setUser({
-          ...user,
-          kycStatus: 'submitted',
-          cardType,
-          cardNumber,
-          cardIssuedAt,
-          governorate,
-        });
-        showToast('success', 'تم الإرسال', 'تم إرسال طلب التحقق بنجاح');
-      } else {
-        setError(data.error || 'حدث خطأ في الإرسال');
-        showToast('error', 'خطأ', data.error || 'حدث خطأ في الإرسال');
+      if (docsToInsert.length > 0) {
+        const { error: docsError } = await supabase
+          .from('kyc_documents')
+          .insert(docsToInsert.map(d => ({
+            user_id: user.id,
+            document_type: d.document_type,
+            document_url: d.document_url,
+            status: 'pending',
+            ai_verification_result: {
+              mode: 'manual_review',
+              note: 'AI verification disabled — pending admin review',
+              uploadedAt: new Date().toISOString(),
+              cardType,
+              cardNumber,
+              cardIssuedAt,
+              governorate,
+            },
+            ai_confidence_score: 0,
+          })));
+        if (docsError) throw docsError;
       }
-    } catch {
-      setError('حدث خطأ في الاتصال');
-      showToast('error', 'خطأ', 'حدث خطأ في الاتصال');
+
+      // 2) Update the user's KYC status to 'submitted' so the UI can reflect
+      //    that they've completed their part.
+      const { error: userErr } = await supabase
+        .from('users')
+        .update({
+          kyc_status: 'submitted',
+          national_id: cardNumber,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+      if (userErr) throw userErr;
+
+      // 3) Push-notify the admin team so they can review the documents promptly.
+      try {
+        await sendNotificationToAdmin({
+          title: 'طلب تحقق هوية جديد (KYC)',
+          body: `${user.name || 'مستخدم'} رفع وثائق التحقق — بانتظار المراجعة اليدوية`,
+          type: 'kyc',
+          category: 'kyc',
+          navigationTarget: 'kyc',
+          data: { action: 'kyc_submitted', userId: user.id },
+        });
+      } catch (e) {
+        console.warn('KYC admin notification failed (non-fatal):', e);
+      }
+
+      setSuccess(true);
+      setUser({
+        ...user,
+        kycStatus: 'submitted',
+        cardType,
+        cardNumber,
+        cardIssuedAt,
+        governorate,
+      });
+      showToast('success', 'تم الإرسال', 'تم إرسال طلب التحقق بنجاح، بانتظار مراجعة الإدارة');
+    } catch (err: any) {
+      console.error('KYC submit error:', err);
+      setError(err?.message || 'حدث خطأ في الإرسال');
+      showToast('error', 'خطأ', err?.message || 'حدث خطأ في الإرسال');
     } finally {
       setIsLoading(false);
     }

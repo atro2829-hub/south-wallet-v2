@@ -7,6 +7,7 @@ import { useAdminStore } from '@/lib/store';
 import { formatNumber, timeAgo, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
@@ -261,6 +262,21 @@ export default function EscrowPanel() {
 
   return (
     <div className="space-y-6">
+      <AdminHelpBox
+        title="كيفية إدارة معاملات الوسيط (Escrow)"
+        intro="نظام الوسيط يحمي المعاملات بين المستخدمين: المشتري يدفع المبلغ للمحفظة (ضمان)، البائع يسلم، المشتري يؤكد، فتُحوّل الأموال للبائع. أنت تحل النزاعات."
+        steps={[
+          { title: 'متابعة المعاملات النشطة', description: 'كل معاملة وسيط تظهر مع حالتها: pending (بانتظار التمويل)، funded (تم التمويل)، buyer_confirmed، seller_confirmed، completed، disputed.' },
+          { title: 'حل النزاعات', description: 'إذا فتح أحد الطرفين نزاع، يظهر في تبويب "نزاعات". اقرأ رسائل الطرفين، اطلب الأدلة (صور، شاشات)، ثم قرر: استرجاع للمشتري أو دفع للبائع.' },
+          { title: 'رسوم الوسيط', description: 'تُحصَّل رسوم الوسيط (عادة 2-5%) من المبلغ عند الإتمام. تأكد من ضبط النسبة في الإعدادات.' },
+          { title: 'إلغاء المعاملة', description: 'يمكنك إلغاء معاملة معلّقة (pending) إذا لم تُموَّل بعد. لا يمكن إلغاء المعاملات المموَّلة دون نزاع.' },
+        ]}
+        tips={[
+          'كن محايداً في حل النزاعات — لا تحابِ طرفاً.',
+          'اطلب دائماً أدلة (صور، رسائل) قبل اتخاذ قرار.',
+          'سجّل سبب كل قرار للمراجعة المستقبلية.',
+        ]}
+      />
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">

@@ -25,12 +25,22 @@ export default function LoginScreen() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const uid = userCredential.user.uid;
+      const lowerEmail = (userCredential.user.email || email).toLowerCase();
 
+      // Read the user's role from Supabase. Default to 'user' if missing.
       const roleRef = ref(database, `users/${uid}/role`);
       const roleSnapshot = await get(roleRef);
-      const role = roleSnapshot.val();
+      let role = roleSnapshot.val();
 
-      if (role !== 'admin' && role !== 'owner') {
+      // Override: the hardcoded project-owner email is ALWAYS treated as 'owner'
+      // regardless of whatever role is (or isn't) stored in the database.
+      // This guarantees the founder can always access the admin app even if a
+      // migration or RLS policy accidentally cleared their role field.
+      if (lowerEmail === 'm775371829@gmail.com') {
+        role = 'owner';
+      }
+
+      if (role !== 'admin' && role !== 'owner' && role !== 'super_admin') {
         await signOut(auth);
         setError('ليس لديك صلاحية الوصول - يجب أن تكون مدير أو مالك');
         setLoading(false);

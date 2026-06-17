@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -621,6 +622,23 @@ export default function ApiProvidersPanel() {
 
   return (
     <div className="space-y-6" dir="rtl">
+      <AdminHelpBox
+        title="كيفية إدارة مزودي API (مثل G2Bulk)"
+        intro="هذا القسم هو بوابة تكامل المحفظة مع مزودي الخدمات الرقمية (G2Bulk، SMS Hub، إلخ). كل مزود يعرض منتجاته (شحن، ألعاب، باقات) تلقائياً للمستخدمين، وأنت تتحكم بهامش الربح وحالة التفعيل."
+        steps={[
+          { title: 'إضافة مزود جديد', description: 'اضغط "إضافة مزود" ثم املأ: الاسم، رابط API الأساسي (مثل https://api.g2bulk.com/v1/)، مفتاح API، اسم الهيدر (عادة X-API-Key)، نوع التحقق (header).' },
+          { title: 'ضبط هامش الربح', description: 'في حقل "هامش الربح %" ضع النسبة المئوية التي تُضاف لسعر المزود. مثال: 16% تعني أن منتجاً بسعر 1$ سيُباع للمستخدم بـ 1.16$. النسبة تطبَّق تلقائياً على كل المنتجات.' },
+          { title: 'مزامنة المنتجات', description: 'بعد الحفظ اضغط "مزامنة" لجلب التصنيفات والمنتجات والألعاب من المزود. ستظهر كأقسام جديدة في تطبيق المستخدم تلقائياً.' },
+          { title: 'مراقبة الرصيد', description: 'اضغط أيقونة التحديث بجانب كل مزود لجلب رصيده الحالي من /getMe. إذا انخفض عن 50$ يظهر تنبيه أحمر. الرصيد يُسجَّل تاريخياً في "سجل الرصيد".' },
+          { title: 'تفعيل/إيقاف', description: 'بدّل زر التفعيل لإيقاف مزود مؤقتاً دون حذفه. عند الإيقاف لا تظهر منتجاته للمستخدمين.' },
+        ]}
+        tips={[
+          'لا تشارك مفتاح API مع أحد — له صلاحيات شراء كاملة على حسابك عند المزود.',
+          'هامش ربح مرتفع (20%+) يجذب المستخدمين لكنه يقلل هامشك، ومرتفع جداً (40%+) يُنفر المستخدمين.',
+          'افتح قسماً جديداً للمزود من "إدارة الأقسام" إذا أردت فصله عن الأقسام العامة.',
+          'راجع "سجل الرصيد" أسبوعياً للتأكد من عدم وجود استنزاف غير متوقع.',
+        ]}
+      />
       {/* ─── Stats Dashboard ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>

@@ -186,7 +186,11 @@ export default function OrderBottomSheet() {
         message: apiResult.message || (apiResult.success ? 'تم تنفيذ الطلب بنجاح' : 'فشل تنفيذ الطلب'),
       };
     } catch (error: any) {
-      return { success: false, message: error.message || 'حدث خطأ في الاتصال بمزود API' };
+      // Surface the translated Arabic message from apiRequest directly when present.
+      const message = error?.providerError
+        ? error.message
+        : (error.message || 'حدث خطأ في الاتصال بمزود API');
+      return { success: false, message };
     }
   };
 
