@@ -180,40 +180,32 @@ export default function TransferModal() {
     const effectiveAmount = parseFloat(amount);
 
     try {
-      // ---- Find recipient by card_number (6-digit) or phone ----
-      // We use the Supabase users table directly because the previous Firebase-style
-      // lookup via `userIds/{cardNumber}` returned the UUID, then `users/{uuid}` was
-      // fetched — but the "self-transfer" check `user.id === recipientUid` compared
-      // UUID against card_number and always evaluated to false, so users could
-      // accidentally "transfer" to themselves. The new flow looks up the recipient
-      // row once by card_number (or phone), then uses the recipient's UUID
-      // consistently for both the self-check and the balance update.
+      // ---- Find recipient by card_number or phone via RPC function ----
+      // Uses the anon key + SECURITY DEFINER function (find_user_by_card)
+      // so the user app never needs the service_role key.
       let recipientData: any = null;
       const fullPhone = `+967${toPhone}`;
-      const fullUserId = toUserId; // 6-digit card_number
+      const fullUserId = toUserId;
 
       try {
         const { supabase } = await import('@/lib/supabase');
         if (transferMode === 'userId') {
-          const { data, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('card_number', fullUserId)
-            .maybeSingle();
+          const { data, error } = await supabase.rpc('find_user_by_card', { p_card_number: fullUserId });
           if (error) {
             console.warn('[transfer] recipient lookup error:', error.message);
           }
-          if (!data) {
+          if (!data || !data.success) {
             setStatus('error');
             setErrorMsg('رقم الحساب غير موجود');
             setIsVerifying(false);
             return;
           }
-          recipientData = data;
+          recipientData = { id: data.id, name: data.name, phone: data.phone };
         } else {
+          // For phone lookup, query users table directly (RLS allows SELECT)
           const { data, error } = await supabase
             .from('users')
-            .select('*')
+            .select('id, phone, display_name')
             .eq('phone', fullPhone)
             .maybeSingle();
           if (error) console.warn('[transfer] phone lookup error:', error.message);
@@ -283,144 +275,61 @@ export default function TransferModal() {
     const effectiveAmount = parseFloat(amount);
 
     try {
-      // ---- Read sender & recipient fresh data DIRECTLY from Supabase ----
-      // The previous implementation fetched via db-compat which returns
-      // snake_case columns (balance_yer, balance_sar, balance_usd) but then
-      // read them with camelCase keys (balanceYER) — so the balance was
-      // always undefined → 0 → "رصيد غير كافي" even when the user had money.
-      // We now query Supabase directly and use snake_case throughout.
-      const { supabaseService } = await import('@/lib/supabase');
-      const balField = `balance_${currency.toLowerCase()}` as 'balance_yer' | 'balance_sar' | 'balance_usd';
+      // ---- Execute transfer via Supabase RPC function ----
+      // Uses anon key + SECURITY DEFINER function so the user app NEVER
+      // needs the service_role key. The function handles:
+      //   - balance check (atomic with row locking)
+      //   - deduct from sender + add to recipient
+      //   - insert transaction record
+      //   - insert notifications for both parties
+      // All in a single atomic PostgreSQL transaction.
+      const { supabase } = await import('@/lib/supabase');
+      const { data, error } = await supabase.rpc('execute_transfer', {
+        p_sender_id: user.id,
+        p_recipient_id: recipientInfo.uid,
+        p_amount: effectiveAmount,
+        p_currency: currency,
+        p_description: description || null,
+      });
 
-      const [senderRes, recipientRes] = await Promise.all([
-        supabaseService.from('users').select(`id,${balField},display_name,first_name,second_name,phone,fcm_token`).eq('id', user.id).maybeSingle(),
-        supabaseService.from('users').select(`id,${balField},display_name,first_name,second_name,phone,fcm_token`).eq('id', recipientInfo.uid).maybeSingle(),
-      ]);
-
-      if (senderRes.error || recipientRes.error) {
-        console.error('[transfer] fetch users error:', senderRes.error, recipientRes.error);
+      if (error) {
+        console.error('[transfer] RPC error:', error);
         setStatus('error');
-        setErrorMsg('حدث خطأ في جلب البيانات، حاول مرة أخرى');
+        setErrorMsg('حدث خطأ في الاتصال، حاول مرة أخرى');
         setIsLoading(false);
         return;
       }
 
-      const senderData = senderRes.data;
-      const recipientData = recipientRes.data;
-
-      if (!senderData || !recipientData) {
+      if (!data || !data.success) {
+        const errCode = data?.error || 'unknown';
+        console.warn('[transfer] function returned error:', errCode);
+        let msg = 'حدث خطأ غير متوقع';
+        if (errCode === 'insufficient_balance') {
+          msg = `رصيد غير كافي. رصيدك الحالي: ${Number(data?.current_balance || 0).toLocaleString()} ${currency}`;
+        } else if (errCode === 'cannot_transfer_to_self') {
+          msg = 'لا يمكنك التحويل إلى حسابك الخاص';
+        } else if (errCode === 'sender_not_found' || errCode === 'recipient_not_found') {
+          msg = 'المستخدم غير موجود';
+        } else if (errCode === 'invalid_amount') {
+          msg = 'مبلغ غير صحيح';
+        }
         setStatus('error');
-        setErrorMsg('حدث خطأ، حاول مرة أخرى');
+        setErrorMsg(msg);
         setIsLoading(false);
         return;
       }
 
-      // ---- Double-check balance (snake_case) ----
-      const currentBalance = Number(senderData[balField]) || 0;
-      if (currentBalance < effectiveAmount) {
-        setStatus('error');
-        setErrorMsg(`رصيد غير كافي. رصيدك الحالي: ${currentBalance.toLocaleString()} ${currency}`);
-        setIsLoading(false);
-        return;
-      }
+      // Transfer succeeded — data contains: reference, sender_name, recipient_name, new_sender_balance
+      const txRef = data.reference as string;
+      const senderName = data.sender_name as string || user.name || 'مستخدم';
+      const recipientName = data.recipient_name as string || recipientInfo.name || 'مستخدم';
+      const newSenderBalance = Number(data.new_sender_balance);
 
-      // ---- Execute the transfer via Supabase (atomic balance updates) ----
-      const txRef = generateReference();
-      const senderName = user.name || senderData.display_name || [senderData.first_name, senderData.second_name].filter(Boolean).join(' ') || 'مستخدم';
-      const recipientName = recipientInfo.name || recipientData.display_name || [recipientData.first_name, recipientData.second_name].filter(Boolean).join(' ') || 'مستخدم';
-
-      // 1) Deduct from sender
-      const newSenderBal = currentBalance - effectiveAmount;
-      const { error: senderUpdateErr } = await supabaseService.from('users')
-        .update({ [balField]: newSenderBal, updated_at: new Date().toISOString() })
-        .eq('id', user.id);
-      if (senderUpdateErr) {
-        console.error('[transfer] sender balance update failed:', senderUpdateErr);
-        setStatus('error');
-        setErrorMsg('فشل تحديث الرصيد، حاول مرة أخرى');
-        setIsLoading(false);
-        return;
-      }
-
-      // 2) Add to recipient
-      const recipientCurrentBal = Number(recipientData[balField]) || 0;
-      const newRecipientBal = recipientCurrentBal + effectiveAmount;
-      const { error: recipientUpdateErr } = await supabaseService.from('users')
-        .update({ [balField]: newRecipientBal, updated_at: new Date().toISOString() })
-        .eq('id', recipientInfo.uid);
-      if (recipientUpdateErr) {
-        // Rollback sender deduction if recipient update fails
-        await supabaseService.from('users')
-          .update({ [balField]: currentBalance, updated_at: new Date().toISOString() })
-          .eq('id', user.id);
-        console.error('[transfer] recipient balance update failed:', recipientUpdateErr);
-        setStatus('error');
-        setErrorMsg('فشل تحديث رصيد المستلم، تم استرجاع رصيدك');
-        setIsLoading(false);
-        return;
-      }
-
-      // 3) Insert transaction record
+      // Send FCM push to recipient
       try {
-        await supabaseService.from('transactions').insert({
-          user_id: user.id,
-          from_user_id: user.id,
-          to_user_id: recipientInfo.uid,
-          amount: effectiveAmount,
-          currency,
-          fee: 0,
-          fee_currency: currency,
-          type: 'transfer',
-          status: 'completed',
-          description: description || `تحويل إلى ${recipientName}`,
-          reference_number: txRef,
-          receipt_data: { sender: senderName, recipient: recipientName },
-          sender_name: senderName,
-          sender_phone: senderData.phone || '',
-          receiver_name: recipientName,
-          receiver_phone: recipientData.phone || '',
-          receiver_card_number: recipientInfo.userId || '',
-          completed_at: new Date().toISOString(),
-        });
-      } catch (txErr) {
-        console.warn('[transfer] transaction record insert failed (non-fatal):', txErr);
-      }
-
-      // 4) Insert in-app notifications for both users
-      const nowIso = new Date().toISOString();
-      try {
-        await supabaseService.from('notifications').insert([
-          {
-            user_id: recipientInfo.uid,
-            title: 'تحويل وارد',
-            body: `تم استلام ${effectiveAmount.toLocaleString()} ${currency} من ${senderName}`,
-            type: 'transaction',
-            is_read: false,
-            data: { action: 'transfer_received', amount: effectiveAmount, currency, from_user_id: user.id },
-            created_at: nowIso,
-          },
-          {
-            user_id: user.id,
-            title: 'تحويل صادر',
-            body: `تم تحويل ${effectiveAmount.toLocaleString()} ${currency} إلى ${recipientName}`,
-            type: 'transaction',
-            is_read: false,
-            data: { action: 'transfer_sent', amount: effectiveAmount, currency, to_user_id: recipientInfo.uid },
-            created_at: nowIso,
-          },
-        ]);
-      } catch (notifErr) {
-        console.warn('[transfer] notifications insert failed (non-fatal):', notifErr);
-      }
-
-      // Store for receipt + FCM
-      const senderDataForNotif = { name: senderName, phone: senderData.phone || '' };
-      const recipientDataForNotif = { name: recipientName, phone: recipientData.phone || '', fcm_token: recipientData.fcm_token, id: recipientInfo.uid };
-
-      // Send FCM push notification to the recipient (works when app is closed).
-      // In-app notification was already inserted above (step 4) — no need to duplicate.
-      try {
-        const recipientFcmToken = recipientData.fcm_token;
+        const { supabase: sb } = await import('@/lib/supabase');
+        const { data: recipientRow } = await sb.from('users').select('fcm_token').eq('id', recipientInfo.uid).maybeSingle();
+        const recipientFcmToken = recipientRow?.fcm_token;
         if (recipientFcmToken) {
           await sendFCMDirect(
             [recipientFcmToken],
@@ -429,8 +338,6 @@ export default function TransferModal() {
             'transaction',
             { action: 'transfer_received', amount: effectiveAmount, currency },
           );
-        } else {
-          console.warn(`[transfer] recipient ${recipientInfo.uid} has no fcm_token — push skipped`);
         }
       } catch (pushError) {
         console.warn('FCM push to recipient failed (non-blocking):', pushError);
@@ -446,8 +353,7 @@ export default function TransferModal() {
       // Update user balance in local store
       const updatedUser = { ...user };
       const userBalanceField = `balance${currency}` as keyof typeof user;
-      (updatedUser as Record<string, unknown>)[userBalanceField] =
-        ((user as Record<string, unknown>)[userBalanceField] as number) - effectiveAmount;
+      (updatedUser as Record<string, unknown>)[userBalanceField] = newSenderBalance;
       useAppStore.getState().setUser(updatedUser);
 
       if (!scheduledDate) {

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ref, onValue, push } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
+import { useState, useEffect, useCallback } from 'react';
+import { supabaseAdmin } from '@/lib/supabase';
+import { sendNotificationToAll, sendNotificationToUser } from '@/lib/notifications';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, formatDateAr } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,12 +21,10 @@ interface AdminNotification {
   title: string;
   body: string;
   type: string;
-  targetType: 'all' | 'specific';
-  targetUserId?: string;
-  sentAt: string;
-  sentBy: string;
-  sentByName: string;
-  recipientCount?: number;
+  target_role: string;
+  is_read: boolean;
+  sent_at: string;
+  data?: any;
 }
 
 export default function NotificationsPanel() {
@@ -41,200 +39,181 @@ export default function NotificationsPanel() {
   const [search, setSearch] = useState('');
   const [users, setUsers] = useState<any[]>([]);
 
-  useEffect(() => {
-    const notifRef = ref(database, 'adminNotifications');
-    const unsub1 = onValue(notifRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: AdminNotification[] = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val }));
-      list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
-      setHistory(list);
+  const loadData = useCallback(async () => {
+    try {
+      // Load admin_notifications from Supabase directly
+      const { data: notifData, error: notifErr } = await supabaseAdmin
+        .from('admin_notifications')
+        .select('*')
+        .order('sent_at', { ascending: false })
+        .limit(100);
+      if (notifErr) {
+        console.warn('[notifications-panel] fetch error:', notifErr.message);
+        setHistory([]);
+      } else {
+        setHistory((notifData || []) as AdminNotification[]);
+      }
+
+      // Load users for the specific-user dropdown
+      const { data: userData, error: userErr } = await supabaseAdmin
+        .from('users')
+        .select('id, email, display_name, card_number')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (!userErr && userData) {
+        setUsers(userData.map((u: any) => ({
+          uid: u.id,
+          email: u.email,
+          name: u.display_name || u.email,
+          cardNumber: u.card_number,
+        })));
+      }
+    } catch (e) {
+      console.error('[notifications-panel] load error:', e);
+    } finally {
       setLoading(false);
-    });
-
-    const usersRef = ref(database, 'users');
-    const unsub2 = onValue(usersRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list = Object.entries(data).map(([uid, val]: [string, any]) => ({ uid, ...val }));
-      setUsers(list);
-    });
-
-    return () => { unsub1(); unsub2(); };
+    }
   }, []);
 
+  useEffect(() => {
+    loadData();
+    const channel = supabaseAdmin
+      .channel(`admin-notif-panel-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_notifications' }, () => loadData())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
+  }, [loadData]);
+
   const handleSend = async () => {
-    if (!title || !body) return;
+    if (!title || !body) { showToast('أدخل العنوان والنص', 'error'); return; }
     setSending(true);
     try {
       if (type === 'all') {
-        await push(ref(database, 'adminNotifications'), {
+        // Send to ALL users via sendNotificationToAll (inserts into each user's notifications + FCM)
+        await sendNotificationToAll({
           title,
           body,
-          type: 'broadcast',
-          targetType: 'all',
-          createdAt: new Date().toISOString(),
-          sentAt: new Date().toISOString(),
-          sentBy: adminUser?.uid,
-          sentByName: adminUser?.displayName,
-          recipientCount: users.length,
+          type: 'info',
+          navigationTarget: null,
+          data: { source: 'admin_broadcast', sentBy: adminUser?.displayName },
         });
-
-        // Save to global notifications path
-        await push(ref(database, 'adminSettings/globalNotifications'), {
+        showToast('تم إرسال الإشعار لكل المستخدمين', 'success');
+      } else {
+        if (!targetUserId) { showToast('اختر مستخدماً', 'error'); setSending(false); return; }
+        await sendNotificationToUser(targetUserId, {
           title,
           body,
-          type: 'broadcast',
-          createdAt: new Date().toISOString(),
-          sentBy: adminUser?.uid,
+          type: 'info',
+          data: { source: 'admin_direct', sentBy: adminUser?.displayName },
         });
-
-        showToast(`تم إرسال الإشعار لجميع المستخدمين (${users.length})`, 'success');
-      } else if (targetUserId) {
-        await push(ref(database, 'adminNotifications'), {
-          title,
-          body,
-          type: 'specific',
-          targetType: 'specific',
-          targetUserId,
-          createdAt: new Date().toISOString(),
-          sentAt: new Date().toISOString(),
-          sentBy: adminUser?.uid,
-          sentByName: adminUser?.displayName,
-          recipientCount: 1,
-        });
-
-        await push(ref(database, `notifications/${targetUserId}`), {
-          title,
-          body,
-          type: 'admin',
-          isRead: false,
-          createdAt: new Date().toISOString(),
-        });
-
         showToast('تم إرسال الإشعار للمستخدم', 'success');
       }
-      setTitle(''); setBody(''); setTargetUserId('');
-    } catch (e) { showToast('حدث خطأ', 'error'); }
-    finally { setSending(false); }
+      setTitle('');
+      setBody('');
+      setTargetUserId('');
+    } catch (e: any) {
+      showToast('فشل الإرسال: ' + (e.message || ''), 'error');
+    } finally {
+      setSending(false);
+    }
   };
 
-  const filteredHistory = history.filter((n) =>
-    !search || n.title?.includes(search) || n.body?.includes(search)
+  const filtered = history.filter(n =>
+    !search || (n.title || '').includes(search) || (n.body || '').includes(search)
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir="rtl">
       <div>
-        <h1 className="text-2xl font-bold">الإشعارات</h1>
-        <p className="text-muted-foreground text-sm mt-1">إرسال إشعارات للمستخدمين وإدارة سجل الإشعارات</p>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Bell className="w-7 h-7 text-[#5C1A1B]" />الإشعارات</h1>
+        <p className="text-muted-foreground text-sm mt-1">إرسال إشعارات للمستخدمين وعرض الإشعارات الواردة</p>
       </div>
 
-      <Tabs defaultValue="send">
-        <TabsList className="w-full">
-          <TabsTrigger value="send" className="flex-1">إرسال إشعار</TabsTrigger>
-          <TabsTrigger value="history" className="flex-1">سجل الإشعارات</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="send" className="space-y-4">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <Card className="admin-card border-0 shadow-none">
-              <CardContent className="p-6 space-y-4">
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-purple-500/10">
-                  <Bell className="w-6 h-6 text-purple-500" />
-                  <div>
-                    <p className="font-medium text-sm">إرسال إشعار جديد</p>
-                    <p className="text-xs text-muted-foreground">إرسال إشعار فوري للمستخدمين</p>
-                  </div>
-                </div>
-
-                <div>
-                  <Label>نوع الإرسال</Label>
-                  <Select value={type} onValueChange={(v: any) => setType(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">
-                        <div className="flex items-center gap-2">
-                          <Users className="w-4 h-4" /> لجميع المستخدمين
-                        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Send Form */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Send className="w-5 h-5 text-[#5C1A1B]" />إرسال إشعار</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label>المستهدف</Label>
+              <Select value={type} onValueChange={(v: any) => setType(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">كل المستخدمين</SelectItem>
+                  <SelectItem value="specific">مستخدم محدد</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {type === 'specific' && (
+              <div>
+                <Label>اختر المستخدم</Label>
+                <Select value={targetUserId} onValueChange={setTargetUserId}>
+                  <SelectTrigger><SelectValue placeholder="ابحث بالاسم أو البريد..." /></SelectTrigger>
+                  <SelectContent>
+                    {users.map((u: any) => (
+                      <SelectItem key={u.uid} value={u.uid}>
+                        {u.name} {u.cardNumber ? `(${u.cardNumber})` : ''}
                       </SelectItem>
-                      <SelectItem value="specific">
-                        <div className="flex items-center gap-2">
-                          <User className="w-4 h-4" /> لمستخدم محدد
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div>
+              <Label>العنوان</Label>
+              <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="عنوان الإشعار" />
+            </div>
+            <div>
+              <Label>النص</Label>
+              <Textarea value={body} onChange={e => setBody(e.target.value)} placeholder="نص الإشعار..." rows={3} />
+            </div>
+            <Button onClick={handleSend} disabled={sending || !title || !body} className="w-full bg-[#5C1A1B] hover:bg-[#3D0F10]">
+              {sending ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Send className="w-4 h-4 ml-2" />}
+              إرسال
+            </Button>
+          </CardContent>
+        </Card>
 
-                {type === 'specific' && (
-                  <div>
-                    <Label>معرف المستخدم (UID)</Label>
-                    <Input value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)} dir="ltr" placeholder="أدخل UID المستخدم..." />
-                  </div>
-                )}
-
-                <div>
-                  <Label>عنوان الإشعار</Label>
-                  <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="عنوان الإشعار..." />
-                </div>
-
-                <div>
-                  <Label>محتوى الإشعار</Label>
-                  <Textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="محتوى الإشعار..." className="min-h-[120px]" />
-                </div>
-
-                <Button onClick={handleSend} disabled={sending || !title || !body} className="w-full bg-purple-600 hover:bg-purple-700">
-                  {sending ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Send className="w-4 h-4 ml-2" />}
-                  إرسال الإشعار
-                </Button>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        <TabsContent value="history" className="space-y-4">
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="بحث في الإشعارات..." value={search} onChange={(e) => setSearch(e.target.value)} className="pr-10" />
-          </div>
-
-          <div className="space-y-3 max-h-[calc(100vh-350px)] overflow-y-auto scrollbar-thin">
-            {filteredHistory.map((notif, i) => (
-              <motion.div key={notif.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
-                <Card className="admin-card border-0 shadow-none">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
-                          <Bell className="w-5 h-5 text-purple-500" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">{notif.title}</p>
-                          <p className="text-xs text-muted-foreground">{notif.body?.substring(0, 80)}{notif.body?.length > 80 ? '...' : ''}</p>
+        {/* History */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2"><Clock className="w-5 h-5 text-[#5C1A1B]" />الإشعارات الواردة ({history.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-3">
+              <div className="relative">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} className="pr-9" />
+              </div>
+            </div>
+            <div className="max-h-[400px] overflow-y-auto space-y-2">
+              {loading ? (
+                <div className="text-center py-8"><Loader2 className="w-6 h-6 mx-auto animate-spin text-muted-foreground" /></div>
+              ) : filtered.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">لا توجد إشعارات</div>
+              ) : (
+                filtered.map((n, i) => (
+                  <motion.div key={n.id || i} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
+                    <div className={`p-3 rounded-xl border ${n.is_read ? 'bg-muted/20' : 'bg-[#5C1A1B]/5 border-[#5C1A1B]/20'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate">{n.title}</p>
+                          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{n.body}</p>
                           <div className="flex items-center gap-2 mt-1">
-                            <Badge className="bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs">
-                              {notif.targetType === 'all' ? 'للجميع' : 'لمستخدم محدد'}
-                            </Badge>
-                            {notif.recipientCount && (
-                              <span className="text-xs text-muted-foreground">({notif.recipientCount} مستلم)</span>
-                            )}
+                            <Badge variant="outline" className="text-[9px]">{n.type}</Badge>
+                            <span className="text-[10px] text-muted-foreground">{n.sent_at ? formatDateAr(n.sent_at) : ''}</span>
                           </div>
                         </div>
-                      </div>
-                      <div className="text-left">
-                        <p className="text-xs text-muted-foreground">{notif.sentAt ? formatDateAr(notif.sentAt) : ''}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{notif.sentByName || ''}</p>
+                        {!n.is_read && <div className="w-2 h-2 rounded-full bg-[#5C1A1B] shrink-0 mt-1" />}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-            {filteredHistory.length === 0 && (
-              <p className="text-center text-muted-foreground py-8">لا يوجد سجل إشعارات</p>
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
+                  </motion.div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

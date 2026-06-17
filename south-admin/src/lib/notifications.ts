@@ -147,30 +147,32 @@ async function getAdminFCMTokens(): Promise<string[]> {
 }
 
 /**
- * Send a notification to admin (for admin/owner app) — in-app + FCM push
+ * Send a notification to admin (for admin/owner app) — in-app + FCM push.
+ * Writes to the `admin_notifications` Supabase table using supabaseAdmin
+ * (service role) so RLS doesn't block the insert.
  */
 export async function sendNotificationToAdmin(notification: NotificationPayload & { category?: string }): Promise<void> {
-  // 1. Save to Supabase admin_notifications or app_config for admin panel
-  // Use the notifications table with a special admin user or app_config
-  const { error } = await supabase
-    .from('app_config')
-    .upsert({
-      key: `admin_notif_${Date.now()}`,
-      value: {
-        title: notification.title,
-        body: notification.body,
-        type: notification.type,
+  // 1. Save to Supabase admin_notifications table (snake_case columns)
+  try {
+    const { error } = await supabaseAdmin.from('admin_notifications').insert({
+      title: notification.title,
+      body: notification.body,
+      type: notification.type || 'info',
+      target_role: 'admin',
+      is_read: false,
+      sent_at: new Date().toISOString(),
+      navigation_target: notification.navigationTarget || null,
+      navigation_params: notification.navigationParams || null,
+      data: {
+        ...(notification.data || {}),
         category: notification.category || 'general',
-        is_read: false,
-        created_at: new Date().toISOString(),
-        data: notification.data || null,
       },
-      description: 'Admin notification',
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'key' });
-
-  if (error) {
-    console.error('Error saving admin notification:', error);
+    });
+    if (error) {
+      console.warn('[sendNotificationToAdmin] insert failed:', error.message);
+    }
+  } catch (e) {
+    console.warn('[sendNotificationToAdmin] exception:', e);
   }
 
   // 2. Send FCM push notification to all admin/owner devices

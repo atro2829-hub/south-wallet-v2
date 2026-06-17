@@ -294,10 +294,10 @@ export default function SupportScreen() {
         const formatted: LiveChatMessage[] = (msgsData || []).map(m => ({
           id: m.id,
           sender: (m.sender_type === 'admin') ? 'admin' as const : 'user' as const,
-          text: m.content || '',
+          text: m.message || m.content || '',  // schema column is `message`, fallback to `content` for old data
           time: m.created_at || new Date().toISOString(),
           adminName: m.sender_type === 'admin' ? (m.sender_name || 'فريق الدعم') : '',
-          image: m.attachment_url || m.attachments || undefined,
+          image: m.attachments || m.attachment_url || undefined,  // schema column is `attachments`
         }));
         setChatMessages(formatted);
       } else {
@@ -336,10 +336,10 @@ export default function SupportScreen() {
           const newMsg: LiveChatMessage = {
             id: payload.new.id,
             sender: (payload.new.sender_type === 'admin') ? 'admin' : 'user',
-            text: payload.new.content || '',
+            text: payload.new.message || payload.new.content || '',  // schema: `message`
             time: payload.new.created_at || new Date().toISOString(),
             adminName: payload.new.sender_type === 'admin' ? (payload.new.sender_name || 'فريق الدعم') : '',
-            image: payload.new.attachment_url || payload.new.attachments || undefined,
+            image: payload.new.attachments || payload.new.attachment_url || undefined,  // schema: `attachments`
           };
           setChatMessages(prev => {
             // Avoid duplicates
@@ -505,17 +505,19 @@ export default function SupportScreen() {
         activeChatIdRef.current = chatId;
       }
 
-      // Insert message
+      // Insert message — use snake_case column names that match the schema:
+      // livechat_messages columns: id, chat_id, sender_id, sender_type, message,
+      // message_type, attachments, is_read, created_at
       const { error: msgError } = await supabase
         .from('livechat_messages')
         .insert({
           chat_id: chatId,
           sender_id: user.id,
           sender_type: 'user',
-          sender_name: user.name || 'مستخدم',
+          message: messageText || (imageToSend ? '📷 صورة' : ''),
           message_type: imageToSend ? 'image' : 'text',
-          content: messageText || (imageToSend ? '📷 صورة' : ''),
-          attachment_url: imageToSend || null,
+          attachments: imageToSend || null,
+          is_read: false,
         });
 
       if (msgError) throw msgError;

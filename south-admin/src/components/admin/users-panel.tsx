@@ -235,11 +235,68 @@ export default function UsersPanel() {
         console.warn('[adjustBalance] activity log failed (non-fatal):', logErr);
       }
 
-      showToast(`تم ${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]}`, 'success');
+      // Insert a transaction record for the user so they see it in their wallet
+      try {
+        await supabaseAdmin.from('transactions').insert({
+          user_id: selectedUser.id,
+          amount: balanceAmount,
+          currency: balanceCurrency,
+          type: balanceAction === 'add' ? 'deposit' : 'withdraw',
+          status: 'completed',
+          description: balanceAction === 'add'
+            ? `إضافة رصيد من الإدارة${balanceNote ? ': ' + balanceNote : ''}`
+            : `خصم رصيد من الإدارة${balanceNote ? ': ' + balanceNote : ''}`,
+          reference_number: `ADM-${Date.now()}`,
+          completed_at: new Date().toISOString(),
+        });
+      } catch (txErr) {
+        console.warn('[adjustBalance] transaction record failed (non-fatal):', txErr);
+      }
+
+      // Send push notification + in-app notification to the user
+      try {
+        const action = balanceAction === 'add' ? 'إضافة' : 'خصم';
+        const title = balanceAction === 'add' ? 'تم إضافة رصيد' : 'تم خصم رصيد';
+        const body = `${action} ${balanceAmount.toLocaleString()} ${currencySymbols[balanceCurrency]}${balanceNote ? ' — ' + balanceNote : ''}`;
+
+        // In-app notification (persisted to notifications table)
+        await supabaseAdmin.from('notifications').insert({
+          user_id: selectedUser.id,
+          title: title,
+          body: body,
+          type: 'transaction',
+          is_read: false,
+          navigation_target: 'wallet',
+          data: {
+            action: balanceAction === 'add' ? 'admin_balance_added' : 'admin_balance_subtracted',
+            amount: balanceAmount,
+            currency: balanceCurrency,
+            note: balanceNote || '',
+            new_balance: newBalance,
+          },
+        });
+
+        // FCM push notification
+        const { data: userRow } = await supabaseAdmin.from('users')
+          .select('fcm_token').eq('id', selectedUser.id).maybeSingle();
+        if (userRow?.fcm_token) {
+          const { sendFCMDirect } = await import('@/lib/fcm-sender');
+          await sendFCMDirect([userRow.fcm_token], title, body, 'transaction', {
+            action: 'admin_balance_update',
+            amount: balanceAmount,
+            currency: balanceCurrency,
+          });
+        }
+      } catch (notifErr) {
+        console.warn('[adjustBalance] notification failed (non-fatal):', notifErr);
+      }
+
+      showToast(`تم ${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]} وإشعار المستخدم`, 'success');
       setBalanceDialog(false);
       setBalanceNote('');
       setBalanceAmount(0);
-    } catch { showToast('حدث خطأ', 'error'); }
+      loadUsers(); // refresh the list
+    } catch (e: any) { showToast('حدث خطأ: ' + (e.message || ''), 'error'); }
     finally { setSaving(false); }
   };
 

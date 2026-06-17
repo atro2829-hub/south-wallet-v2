@@ -32,20 +32,11 @@ import {
   saveG2BulkApiKey,
   getG2BulkSettings,
   updateG2BulkSettings,
-  syncG2BulkCategories,
-  syncG2BulkProducts,
-  fullG2BulkSync,
-  getG2BulkCategoriesFromFirebase,
-  getG2BulkProductsFromFirebase,
-  updateG2BulkCategory,
-  updateG2BulkProduct,
   checkG2BulkBalance,
   checkG2BulkOrderStatus,
   type G2BulkCategory,
   type G2BulkProduct,
 } from '@/lib/g2bulk';
-import { onValue, ref } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
 
 export default function G2BulkPanel() {
   const [apiKey, setApiKey] = useState('');
@@ -405,37 +396,59 @@ export default function G2BulkPanel() {
     }
   };
 
-  // Toggle category enabled
+  // Toggle category enabled — uses Supabase directly
   const handleToggleCategory = async (catId: string, enabled: boolean) => {
     try {
-      await updateG2BulkCategory(Number(catId), { enabled });
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      await supabaseAdmin.from('api_categories')
+        .update({ is_active: enabled, updated_at: new Date().toISOString() })
+        .eq('api_category_id', catId).eq('api_provider_id', 'g2bulk');
     } catch (error) {
       console.error('Failed to update category:', error);
     }
   };
 
-  // Map category to section
+  // Map category to section — uses Supabase directly
   const handleMapCategory = async (catId: string, mappedToSection: string) => {
     try {
-      await updateG2BulkCategory(Number(catId), { mappedToSection });
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      await supabaseAdmin.from('api_categories')
+        .update({ section_id: mappedToSection, updated_at: new Date().toISOString() })
+        .eq('api_category_id', catId).eq('api_provider_id', 'g2bulk');
     } catch (error) {
       console.error('Failed to map category:', error);
     }
   };
 
-  // Toggle product enabled
+  // Toggle product enabled — uses Supabase directly
   const handleToggleProduct = async (prodId: string, enabled: boolean) => {
     try {
-      await updateG2BulkProduct(Number(prodId), { enabled });
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      await supabaseAdmin.from('service_providers')
+        .update({ is_active: enabled, updated_at: new Date().toISOString() })
+        .eq('api_product_id', prodId).eq('api_provider_id', 'g2bulk');
+      await supabaseAdmin.from('product_packages')
+        .update({ is_active: enabled, updated_at: new Date().toISOString() })
+        .eq('api_product_id', prodId);
     } catch (error) {
       console.error('Failed to update product:', error);
     }
   };
 
-  // Update product markup
+  // Update product markup — uses Supabase directly
   const handleProductMarkup = async (prodId: string, markupPercent: number) => {
     try {
-      await updateG2BulkProduct(Number(prodId), { markupPercent });
+      const { supabaseAdmin } = await import('@/lib/supabase');
+      // Re-calculate price based on cost + new markup
+      const { data: pkg } = await supabaseAdmin.from('product_packages')
+        .select('cost_price').eq('api_product_id', prodId).maybeSingle();
+      if (pkg) {
+        const newPrice = Number(((Number(pkg.cost_price) || 0) * (1 + markupPercent / 100)).toFixed(2));
+        const commission = Number((newPrice - (Number(pkg.cost_price) || 0)).toFixed(2));
+        await supabaseAdmin.from('product_packages')
+          .update({ price_usd: newPrice, commission_amount: commission, updated_at: new Date().toISOString() })
+          .eq('api_product_id', prodId);
+      }
     } catch (error) {
       console.error('Failed to update product markup:', error);
     }

@@ -1,13 +1,16 @@
 // G2Bulk API Service for Admin App
-// Manages G2Bulk API settings, syncs categories/products
-// Uses Supabase for ALL data (no Firebase for data operations).
+// ONLY handles: API key settings, connection test, balance check.
+// Product/category syncing is handled by g2bulk-panel.tsx directly
+// (which writes to Supabase tables: service_providers, product_packages,
+// api_products, api_categories, sub_sections, api_games).
+// This file must NOT contain any sync functions — they caused conflicts
+// with the Supabase-direct sync in the panel.
 
-import { get, ref, update, set, database } from '@/lib/db-compat';
-import { supabase } from './supabase';
+import { supabaseAdmin } from './supabase';
 
 const G2BULK_BASE_URL = 'https://api.g2bulk.com/v1';
 
-// Types
+// Types (kept for compatibility with g2bulk-panel.tsx imports)
 export interface G2BulkCategory {
   id: number;
   title: string;
@@ -28,62 +31,81 @@ export interface G2BulkProduct {
 
 export interface G2BulkPurchaseResult {
   status: 'COMPLETED' | 'PENDING';
-  delivery_items?: string[];
   order_id?: number;
+  message?: string;
 }
 
 export interface G2BulkBalance {
-  success: boolean;
-  user_id: number;
-  username: string;
   balance: number;
+  username?: string;
+  success: boolean;
 }
 
-// Get API key from Firebase admin settings
-async function getApiKey(): Promise<string> {
-  const snapshot = await get(ref(database, 'adminSettings/g2bulk/apiKey'));
-  if (!snapshot.exists()) {
-    throw new Error('G2Bulk API key not configured');
+// ─── Settings stored in Supabase api_providers table ───
+
+export async function getG2BulkSettings(): Promise<{
+  apiKey: string;
+  enabled: boolean;
+  autoSync: boolean;
+  markupPercent: number;
+  lastSync: string;
+  balance: number | null;
+}> {
+  try {
+    const { data, error } = await supabaseAdmin.from('api_providers')
+      .select('*').eq('id', 'g2bulk').maybeSingle();
+    if (error || !data) {
+      return { apiKey: '', enabled: false, autoSync: false, markupPercent: 16, lastSync: '', balance: null };
+    }
+    return {
+      apiKey: data.api_key || '',
+      enabled: data.is_active ?? false,
+      autoSync: data.sync_products ?? false,
+      markupPercent: data.default_commission ?? 16,
+      lastSync: data.last_sync_at || '',
+      balance: data.balance ?? null,
+    };
+  } catch {
+    return { apiKey: '', enabled: false, autoSync: false, markupPercent: 16, lastSync: '', balance: null };
   }
-  return snapshot.val();
 }
 
-// Make authenticated request to G2Bulk API
-async function g2bulkRequest<T>(
-  endpoint: string,
-  method: 'GET' | 'POST' = 'GET',
-  body?: Record<string, unknown>
-): Promise<T> {
-  const apiKey = await getApiKey();
-
-  const headers: Record<string, string> = {
-    'X-API-Key': apiKey,
-    'Content-Type': 'application/json',
-  };
-
-  const options: RequestInit = {
-    method,
-    headers,
-  };
-
-  if (body && method === 'POST') {
-    options.body = JSON.stringify(body);
-  }
-
-  const response = await fetch(`${G2BULK_BASE_URL}${endpoint}`, options);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`G2Bulk API error (${response.status}): ${errorText}`);
-  }
-
-  const data = await response.json();
-  return data as T;
+export async function saveG2BulkApiKey(apiKey: string): Promise<void> {
+  await supabaseAdmin.from('api_providers').upsert({
+    id: 'g2bulk',
+    name: 'G2Bulk',
+    api_url: G2BULK_BASE_URL + '/',
+    api_key: apiKey,
+    auth_header: 'X-API-Key',
+    auth_type: 'header',
+    is_active: true,
+    balance_currency: 'USD',
+    default_commission: 16,
+    commission_type: 'percentage',
+    sync_categories: true,
+    sync_products: true,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'id' });
 }
 
-// === Admin API Functions ===
+export async function updateG2BulkSettings(settings: {
+  enabled?: boolean;
+  autoSync?: boolean;
+  markupPercent?: number;
+}): Promise<void> {
+  const update: Record<string, any> = { updated_at: new Date().toISOString() };
+  if (settings.enabled !== undefined) update.is_active = settings.enabled;
+  if (settings.autoSync !== undefined) {
+    update.sync_categories = settings.autoSync;
+    update.sync_products = settings.autoSync;
+  }
+  if (settings.markupPercent !== undefined) {
+    update.default_commission = settings.markupPercent;
+    update.commission_type = 'percentage';
+  }
+  await supabaseAdmin.from('api_providers').update(update).eq('id', 'g2bulk');
+}
 
-// Test G2Bulk API connection with a specific key
 export async function testG2BulkConnection(apiKey: string): Promise<{
   success: boolean;
   balance?: number;
@@ -91,189 +113,67 @@ export async function testG2BulkConnection(apiKey: string): Promise<{
   error?: string;
 }> {
   try {
-    const response = await fetch(`${G2BULK_BASE_URL}/getMe`, {
-      headers: {
-        'X-API-Key': apiKey,
-        'Content-Type': 'application/json',
-      },
+    const res = await fetch(`${G2BULK_BASE_URL}/getMe`, {
+      headers: { 'X-API-Key': apiKey },
     });
-
-    if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
+    if (!res.ok) {
+      return { success: false, error: `HTTP ${res.status}` };
     }
-
-    const data = await response.json();
-    if (data.success) {
-      return {
-        success: true,
-        balance: data.balance,
-        username: data.username,
-      };
+    const data = await res.json();
+    if (data.success === false) {
+      return { success: false, error: data.message || 'API key invalid' };
     }
-    return { success: false, error: 'API returned unsuccessful response' };
-  } catch (error: unknown) {
-    return { success: false, error: (error as Error).message };
-  }
-}
-
-// Save API key to Firebase
-export async function saveG2BulkApiKey(apiKey: string): Promise<void> {
-  await update(ref(database, 'adminSettings/g2bulk'), { apiKey });
-}
-
-// Get G2Bulk settings from Firebase
-export async function getG2BulkSettings(): Promise<{
-  apiKey: string;
-  enabled: boolean;
-  autoSync: boolean;
-  lastSync: string;
-  markupPercent: number;
-  categories: G2BulkCategory[];
-  products: G2BulkProduct[];
-}> {
-  const snapshot = await get(ref(database, 'adminSettings/g2bulk'));
-  if (!snapshot.exists()) {
+    // Update balance in DB
+    await supabaseAdmin.from('api_providers').update({
+      balance: data.balance || 0,
+      balance_currency: 'USD',
+      last_balance_check: new Date().toISOString(),
+    }).eq('id', 'g2bulk');
     return {
-      apiKey: '',
-      enabled: false,
-      autoSync: false,
-      lastSync: '',
-      markupPercent: 0,
-      categories: [],
-      products: [],
+      success: true,
+      balance: data.balance || 0,
+      username: data.username || data.first_name || '',
     };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Connection failed' };
   }
-  return snapshot.val();
 }
 
-// Update G2Bulk settings
-export async function updateG2BulkSettings(settings: {
-  enabled?: boolean;
-  autoSync?: boolean;
-  markupPercent?: number;
-}): Promise<void> {
-  await update(ref(database, 'adminSettings/g2bulk'), settings);
-}
-
-// Fetch and sync categories from G2Bulk API to Firebase
-export async function syncG2BulkCategories(): Promise<G2BulkCategory[]> {
-  const data = await g2bulkRequest<{ success: boolean; categories: G2BulkCategory[] }>('/category');
-  const categories = data.categories || [];
-
-  // Merge with existing mappings in Firebase
-  const existingSnapshot = await get(ref(database, 'adminSettings/g2bulk/categories'));
-  const existingCategories: Record<string, G2BulkCategory> = existingSnapshot.exists()
-    ? existingSnapshot.val()
-    : {};
-
-  // Update categories, preserving mappings
-  const updatedCategories: Record<string, G2BulkCategory> = {};
-  for (const cat of categories) {
-    const existing = existingCategories[cat.id]?.mappedToSection
-      ? existingCategories[cat.id]
-      : null;
-    updatedCategories[cat.id] = {
-      ...cat,
-      mappedToSection: existing?.mappedToSection || '',
-      enabled: existing?.enabled !== undefined ? existing.enabled : true,
-    };
-  }
-
-  await set(ref(database, 'adminSettings/g2bulk/categories'), updatedCategories);
-  return categories;
-}
-
-// Fetch and sync products from G2Bulk API to Firebase
-export async function syncG2BulkProducts(): Promise<G2BulkProduct[]> {
-  const categories = await getG2BulkCategoriesFromFirebase();
-  const allProducts: G2BulkProduct[] = [];
-
-  for (const catId of Object.keys(categories)) {
-    const cat = categories[catId];
-    try {
-      const data = await g2bulkRequest<{ success: boolean; products: G2BulkProduct[] }>(
-        `/category/${cat.id}`
-      );
-      const products = data.products || [];
-      for (const product of products) {
-        allProducts.push({ ...product, category_id: cat.id });
-      }
-    } catch (e) {
-      console.error(`Failed to fetch products for category ${cat.id}:`, e);
-    }
-  }
-
-  // Save to Firebase with existing settings preserved
-  const existingSnapshot = await get(ref(database, 'adminSettings/g2bulk/products'));
-  const existingProducts: Record<string, G2BulkProduct> = existingSnapshot.exists()
-    ? existingSnapshot.val()
-    : {};
-
-  const updatedProducts: Record<string, G2BulkProduct> = {};
-  for (const product of allProducts) {
-    const existing = existingProducts[product.id];
-    updatedProducts[product.id] = {
-      ...product,
-      enabled: existing?.enabled !== undefined ? existing.enabled : true,
-      markupPercent: existing?.markupPercent || 0,
-      customPrice: existing?.customPrice || 0,
-    };
-  }
-
-  await set(ref(database, 'adminSettings/g2bulk/products'), updatedProducts);
-  await update(ref(database, 'adminSettings/g2bulk'), {
-    lastSync: new Date().toISOString(),
-  });
-
-  return allProducts;
-}
-
-// Full sync (categories + products)
-export async function fullG2BulkSync(): Promise<void> {
-  await syncG2BulkCategories();
-  await syncG2BulkProducts();
-}
-
-// Get categories from Firebase cache
-export async function getG2BulkCategoriesFromFirebase(): Promise<Record<string, G2BulkCategory>> {
-  const snapshot = await get(ref(database, 'adminSettings/g2bulk/categories'));
-  return snapshot.exists() ? snapshot.val() : {};
-}
-
-// Get products from Firebase cache
-export async function getG2BulkProductsFromFirebase(): Promise<Record<string, G2BulkProduct>> {
-  const snapshot = await get(ref(database, 'adminSettings/g2bulk/products'));
-  return snapshot.exists() ? snapshot.val() : {};
-}
-
-// Update category mapping
-export async function updateG2BulkCategory(
-  categoryId: number,
-  updates: { mappedToSection?: string; enabled?: boolean }
-): Promise<void> {
-  await update(ref(database, `adminSettings/g2bulk/categories/${categoryId}`), updates);
-}
-
-// Update product settings
-export async function updateG2BulkProduct(
-  productId: number,
-  updates: { enabled?: boolean; markupPercent?: number; customPrice?: number }
-): Promise<void> {
-  await update(ref(database, `adminSettings/g2bulk/products/${productId}`), updates);
-}
-
-// Check G2Bulk account balance
 export async function checkG2BulkBalance(): Promise<G2BulkBalance> {
-  return g2bulkRequest<G2BulkBalance>('/getMe');
+  const settings = await getG2BulkSettings();
+  if (!settings.apiKey) {
+    return { balance: 0, success: false };
+  }
+  try {
+    const res = await fetch(`${G2BULK_BASE_URL}/getMe`, {
+      headers: { 'X-API-Key': settings.apiKey },
+    });
+    const data = await res.json();
+    await supabaseAdmin.from('api_providers').update({
+      balance: data.balance || 0,
+      balance_currency: 'USD',
+      last_balance_check: new Date().toISOString(),
+    }).eq('id', 'g2bulk');
+    return { balance: data.balance || 0, username: data.username, success: true };
+  } catch {
+    return { balance: 0, success: false };
+  }
 }
 
-// Get all G2Bulk orders from Firebase
-export async function getG2BulkOrders(): Promise<Record<string, any>> {
-  const snapshot = await get(ref(database, 'g2bulkOrders'));
-  return snapshot.exists() ? snapshot.val() : {};
-}
-
-// Check G2Bulk order delivery status
 export async function checkG2BulkOrderStatus(orderId: number): Promise<G2BulkPurchaseResult> {
-  return g2bulkRequest<G2BulkPurchaseResult>(`/orders/${orderId}/delivery`);
+  const settings = await getG2BulkSettings();
+  if (!settings.apiKey) return { status: 'PENDING', message: 'No API key' };
+  try {
+    const res = await fetch(`${G2BULK_BASE_URL}/order/${orderId}`, {
+      headers: { 'X-API-Key': settings.apiKey },
+    });
+    const data = await res.json();
+    return {
+      status: data.order?.status || 'PENDING',
+      order_id: orderId,
+      message: data.order?.message || data.message,
+    };
+  } catch {
+    return { status: 'PENDING', order_id: orderId };
+  }
 }

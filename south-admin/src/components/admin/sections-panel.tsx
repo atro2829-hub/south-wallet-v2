@@ -10,7 +10,7 @@ import {
   getApiProviders,
   type DbSection,
   type DbApiProvider,
-  supabase,
+  supabaseAdmin,
 } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, generateId } from '@/lib/utils';
@@ -75,15 +75,15 @@ export default function SectionsPanel() {
     loadData();
   }, [loadData]);
 
-  // Realtime subscription
+  // Realtime subscription — use supabaseAdmin for consistency
   useEffect(() => {
-    const channel = supabase
-      .channel('sections-changes')
+    const channel = supabaseAdmin
+      .channel('sections-changes-admin')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => {
         loadData();
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabaseAdmin.removeChannel(channel); };
   }, [loadData]);
 
   const handleInitializeDefaults = async () => {

@@ -188,11 +188,8 @@ const utilityServices = [
   { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' as const },
 ];
 
-const promoItems = [
-  { title: 'شحن رصيدك الآن واحصل على مكافأة!', desc: 'مكافأة تصل إلى 500 ر.ي عند كل شحن' },
-  { title: 'عرض حصري على بطاقات ببجي', desc: 'خصم 15% على جميع شدات ببجي' },
-  { title: 'أول تحويل مجاني', desc: 'استمتع بتحويل مجاني عند التسجيل' },
-];
+// NOTE: Static promo items removed — banners are now fully dynamic from the
+// Supabase banners table (managed by admin). No hardcoded promos in the UI.
 
 // Animated counter hook
 function useAnimatedCounter(target: number, duration = 800) {
@@ -338,7 +335,6 @@ export default function HomeScreen() {
   const [activeCardIndex, setActiveCardIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(375);
-  const [promoIndex, setPromoIndex] = useState(0);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [bannerIndex, setBannerIndex] = useState(0);
   const [fabOpen, setFabOpen] = useState(false);
@@ -448,14 +444,8 @@ export default function HomeScreen() {
     return () => clearInterval(interval);
   }, [banners.length]);
 
-  // Promo rotation (for static fallback)
-  useEffect(() => {
-    if (banners.length > 0) return; // Don't rotate static promo when banners exist
-    const interval = setInterval(() => {
-      setPromoIndex(prev => (prev + 1) % promoItems.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [banners.length]);
+  // NOTE: Static promo rotation removed — no more hardcoded promos.
+  // Banners are 100% dynamic from the Supabase banners table.
 
   const CARD_GAP = 12;
   const CARD_SIDE_PADDING = 32;
@@ -1237,56 +1227,8 @@ export default function HomeScreen() {
             )}
           </div>
         ) : (
-          /* Static Promo Banner (fallback) */
-          <div
-            className="rounded-2xl relative overflow-hidden"
-            style={{
-              height: 90,
-              background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)',
-              borderRadius: 16,
-              boxShadow: '0 4px 16px rgba(92,26,27,0.2)',
-            }}
-          >
-            <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
-            <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }} />
-            <img src={LOGO_BASE64} alt="" className="absolute left-2 bottom-1 w-20 h-20 object-contain opacity-[0.06] pointer-events-none" aria-hidden="true" />
-
-            <div className="relative z-10 h-full flex items-center px-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.2)', color: '#FFF' }}>
-                    <Sparkles size={8} />
-                    عرض خاص
-                  </span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>
-                    <Clock size={8} className="inline ml-0.5" />
-                    محدود
-                  </span>
-                </div>
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={promoIndex}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <h3 className="font-bold text-[13px] text-white leading-tight">{promoItems[promoIndex].title}</h3>
-                    <p className="text-[11px] mt-0.5 text-white/50">{promoItems[promoIndex].desc}</p>
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-              <div className="shrink-0 mr-2">
-                <CountdownTimer targetDate={flashDealEnd.current} />
-              </div>
-            </div>
-
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1">
-              {promoItems.map((_, i) => (
-                <div key={i} className="rounded-full transition-all duration-300" style={{ width: i === promoIndex ? '6px' : '4px', height: i === promoIndex ? '6px' : '4px', borderRadius: '50%', background: i === promoIndex ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)' }} />
-              ))}
-            </div>
-          </div>
+          /* No banners — show nothing instead of hardcoded promos */
+          <div className="hidden" />
         )}
       </motion.div>
 
