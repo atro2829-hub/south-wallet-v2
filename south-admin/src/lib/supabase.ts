@@ -39,6 +39,54 @@ export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
 // TYPE DEFINITIONS - Matching Supabase schema
 // =====================================================
 
+export interface DbProviderSection {
+  id: string;
+  provider_id: string;
+  section_id: string;
+  sub_section_id: string | null;
+  is_active: boolean;
+  commission_rate: number;
+  commission_type: 'percentage' | 'fixed' | 'none';
+  max_discount: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  sections?: DbSection;
+  sub_sections?: DbSubSection;
+}
+
+export interface DbEmployeeSection {
+  id: string;
+  employee_id: string;
+  section_id: string;
+  can_add: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+  can_manage_providers: boolean;
+  can_manage_products: boolean;
+  can_approve_orders: boolean;
+  can_view_stats: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbApiProviderEndpoint {
+  id: string;
+  api_provider_id: string;
+  endpoint_path: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  description: string;
+  headers: Record<string, unknown>;
+  body_template: Record<string, unknown>;
+  response_mapping: Record<string, unknown>;
+  is_active: boolean;
+  rate_limit: number;
+  timeout_ms: number;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DbSection {
   id: string;
   name: string;
@@ -643,3 +691,111 @@ export const supabaseService = {
     }
   },
 };
+
+// =====================================================
+// PROVIDER SECTIONS MANAGEMENT (admin)
+// =====================================================
+
+export async function getProviderSections(providerId: string): Promise<DbProviderSection[]> {
+  const { data, error } = await supabaseAdmin
+    .from('provider_sections')
+    .select('*, sections(*), sub_sections(*)')
+    .eq('provider_id', providerId)
+    .order('sort_order', { ascending: true });
+  if (error) { console.error('Error fetching provider sections:', error); return []; }
+  return data || [];
+}
+
+export async function assignProviderSections(providerId: string, sections: Array<{
+  section_id: string;
+  sub_section_id?: string;
+  commission_rate?: number;
+  commission_type?: string;
+  max_discount?: number;
+}>): Promise<boolean> {
+  // Remove existing
+  await supabaseAdmin.from('provider_sections').delete().eq('provider_id', providerId);
+  // Insert new
+  if (sections.length === 0) return true;
+  const links = sections.map((s, i) => ({
+    provider_id: providerId,
+    section_id: s.section_id,
+    sub_section_id: s.sub_section_id || null,
+    commission_rate: s.commission_rate || 0,
+    commission_type: s.commission_type || 'percentage',
+    max_discount: s.max_discount || 0,
+    sort_order: i,
+  }));
+  const { error } = await supabaseAdmin.from('provider_sections').insert(links);
+  if (error) { console.error('Error assigning provider sections:', error); return false; }
+  return true;
+}
+
+// =====================================================
+// EMPLOYEE SECTIONS MANAGEMENT (admin)
+// =====================================================
+
+export async function getEmployeeSections(employeeId: string): Promise<DbEmployeeSection[]> {
+  const { data, error } = await supabaseAdmin
+    .from('employee_sections')
+    .select('*')
+    .eq('employee_id', employeeId);
+  if (error) { console.error('Error fetching employee sections:', error); return []; }
+  return data || [];
+}
+
+export async function assignEmployeeSections(employeeId: string, sections: Array<{
+  section_id: string;
+  can_add?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  can_manage_providers?: boolean;
+  can_manage_products?: boolean;
+  can_approve_orders?: boolean;
+  can_view_stats?: boolean;
+}>): Promise<boolean> {
+  await supabaseAdmin.from('employee_sections').delete().eq('employee_id', employeeId);
+  if (sections.length === 0) return true;
+  const links = sections.map(s => ({
+    employee_id: employeeId,
+    section_id: s.section_id,
+    can_add: s.can_add ?? true,
+    can_edit: s.can_edit ?? true,
+    can_delete: s.can_delete ?? false,
+    can_manage_providers: s.can_manage_providers ?? false,
+    can_manage_products: s.can_manage_products ?? false,
+    can_approve_orders: s.can_approve_orders ?? false,
+    can_view_stats: s.can_view_stats ?? true,
+  }));
+  const { error } = await supabaseAdmin.from('employee_sections').insert(links);
+  if (error) { console.error('Error assigning employee sections:', error); return false; }
+  return true;
+}
+
+// =====================================================
+// API PROVIDER ENDPOINTS MANAGEMENT (admin)
+// =====================================================
+
+export async function getApiProviderEndpoints(apiProviderId: string): Promise<DbApiProviderEndpoint[]> {
+  const { data, error } = await supabaseAdmin
+    .from('api_provider_endpoints')
+    .select('*')
+    .eq('api_provider_id', apiProviderId);
+  if (error) { console.error('Error fetching API provider endpoints:', error); return []; }
+  return data || [];
+}
+
+export async function upsertApiProviderEndpoint(endpoint: Partial<DbApiProviderEndpoint> & { api_provider_id: string }): Promise<boolean> {
+  const id = endpoint.id || `ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const { error } = await supabaseAdmin
+    .from('api_provider_endpoints')
+    .upsert({ ...endpoint, id, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  if (error) { console.error('Error upserting API endpoint:', error); return false; }
+  return true;
+}
+
+export async function deleteApiProviderEndpoint(id: string): Promise<boolean> {
+  const { error } = await supabaseAdmin.from('api_provider_endpoints').delete().eq('id', id);
+  if (error) { console.error('Error deleting API endpoint:', error); return false; }
+  return true;
+}

@@ -93,5 +93,4 @@ google-services*.json
 !south-admin/android/app/google-services.json
 check_firebase*.py
 tool-results/
-scripts/
 *.keystore
