@@ -2,9 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from '@/lib/supabase-auth';
-import { ref, get, onValue } from '@/lib/db-compat';
 import { auth } from '@/lib/supabase-auth';
-import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import LoginScreen from '@/components/admin/login-screen';
 import Sidebar from '@/components/admin/sidebar';
@@ -45,6 +43,7 @@ import UsdtPanel from '@/components/admin/usdt-panel';
 import { Menu, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
+import { useSupabaseSync } from '@/lib/use-supabase-sync';
 
 const panelMap: Record<string, React.ComponentType> = {
   dashboard: Dashboard,
@@ -87,32 +86,40 @@ export default function AdminApp() {
   const { isAuthenticated, adminUser, activePanel, setAdminUser, logout, setSidebarOpen } = useAdminStore();
   const [initializing, setInitializing] = useState(true);
   const [newNotifications, setNewNotifications] = useState(0);
+  
+  // Initialize Supabase data sync — fetches users, orders, deposits, withdrawals
+  // into the admin store. Without this, the store is empty and all panels show 0.
+  useSupabaseSync();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
-          const roleRef = ref(database, `users/${user.uid}/role`);
-          const roleSnapshot = await get(roleRef);
-          let role = roleSnapshot.val();
+          // Fetch user data directly from Supabase (not db-compat)
+          const { data: userData, error } = await supabaseAdmin
+            .from('users')
+            .select('role, display_name, first_name, second_name, avatar_url')
+            .eq('id', user.uid)
+            .maybeSingle();
+
+          let role = userData?.role || 'user';
 
           // Override: the hardcoded project-owner email is ALWAYS treated as 'owner'.
-          // Guarantees founder access even if a migration wiped the role field.
           if ((user.email || '').toLowerCase() === 'm775371829@gmail.com') {
             role = 'owner';
           }
 
           if (role === 'admin' || role === 'owner' || role === 'super_admin') {
-            const nameRef = ref(database, `users/${user.uid}`);
-            const nameSnapshot = await get(nameRef);
-            const userData = nameSnapshot.val() || {};
+            const displayName = userData?.display_name ||
+              [userData?.first_name, userData?.second_name].filter(Boolean).join(' ') ||
+              user.email?.split('@')[0] || '';
 
             setAdminUser({
               uid: user.uid,
               email: user.email || '',
-              displayName: userData.name || userData.firstName || user.email?.split('@')[0] || '',
+              displayName,
               role,
-              photoURL: userData.avatar || user.photoURL || undefined,
+              photoURL: userData?.avatar_url || user.photoURL || undefined,
             });
           } else {
             logout();
@@ -130,21 +137,27 @@ export default function AdminApp() {
     return () => unsubscribe();
   }, []);
 
-  // Listen for admin notifications (order/deposit/withdraw)
+  // Listen for admin notifications from Supabase admin_notifications table
   useEffect(() => {
     if (!isAuthenticated) return;
-    const notifRef = ref(database, 'adminNotifications');
-    const unsub = onValue(notifRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const now = new Date();
-      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000);
-      let count = 0;
-      Object.values(data).forEach((n: any) => {
-        if (n.sentAt && new Date(n.sentAt) > fiveMinAgo) count++;
-      });
-      setNewNotifications(count);
-    });
-    return () => unsub();
+    const loadCount = async () => {
+      try {
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { count } = await supabaseAdmin
+          .from('admin_notifications')
+          .select('*', { count: 'exact', head: true })
+          .gte('sent_at', fiveMinAgo);
+        setNewNotifications(count || 0);
+      } catch (e) {
+        console.warn('[admin] notif count error:', e);
+      }
+    };
+    loadCount();
+    const channel = supabaseAdmin
+      .channel(`admin-notif-count-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_notifications' }, () => loadCount())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
   }, [isAuthenticated]);
 
   // Initialize Capacitor Push Notifications for admin app
