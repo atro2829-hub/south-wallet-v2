@@ -44,6 +44,7 @@ import { Menu, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
 import { useSupabaseSync } from '@/lib/use-supabase-sync';
+import { supabaseAdmin } from '@/lib/supabase';
 
 const panelMap: Record<string, React.ComponentType> = {
   dashboard: Dashboard,

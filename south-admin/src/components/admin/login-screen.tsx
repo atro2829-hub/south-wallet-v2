@@ -28,10 +28,12 @@ export default function LoginScreen() {
       const uid = userCredential.user.uid;
       const lowerEmail = (userCredential.user.email || email).toLowerCase();
 
-      // Read the user's role from Supabase. Default to 'user' if missing.
-      const roleRef = ref(database, `users/${uid}/role`);
-      const roleSnapshot = await get(roleRef);
-      let role = roleSnapshot.val();
+      // Read the full user row from Supabase to get the role field.
+      // db-compat ignores sub-paths like 'users/uid/role', so we fetch the whole row.
+      const userRef = ref(database, `users/${uid}`);
+      const userSnapshot = await get(userRef);
+      const dbUser = userSnapshot.val() || {};
+      let role = dbUser.role || 'user';
 
       // Override: the hardcoded project-owner email is ALWAYS treated as 'owner'
       // regardless of whatever role is (or isn't) stored in the database.
@@ -48,16 +50,13 @@ export default function LoginScreen() {
         return;
       }
 
-      const nameRef = ref(database, `users/${uid}`);
-      const nameSnapshot = await get(nameRef);
-      const userData = nameSnapshot.val() || {};
-
+      // dbUser already fetched above — reuse it
       setAdminUser({
         uid,
         email: userCredential.user.email || email,
-        displayName: userData.name || userData.firstName || email.split('@')[0],
+        displayName: dbUser.display_name || [dbUser.first_name, dbUser.second_name].filter(Boolean).join(' ') || email.split('@')[0],
         role,
-        photoURL: userData.avatar || userCredential.user.photoURL || undefined,
+        photoURL: dbUser.avatar_url || userCredential.user.photoURL || undefined,
       });
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') setError('المستخدم غير موجود');

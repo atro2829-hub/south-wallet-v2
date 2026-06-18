@@ -74,12 +74,15 @@ export type Unsubscribe = () => void;
 // Path parsing
 // ============================================================
 
-function parsePath(path: string): { table: string; filter?: { column: string; value: any }; id?: string; raw: string; extractValue?: boolean } {
+function parsePath(path: string): { table: string; filter?: { column: string; value: any }; id?: string; raw: string; extractValue?: boolean; extractField?: string } {
   const clean = path.replace(/^\/+|\/+$/g, '');
   const parts = clean.split('/');
 
   // users/{uid}
   if (parts[0] === 'users' && parts[1]) {
+    if (parts[2]) {
+      return { table: 'users', filter: { column: 'id', value: parts[1] }, raw: path, extractField: parts[2] };
+    }
     return { table: 'users', filter: { column: 'id', value: parts[1] }, raw: path };
   }
   // userIds/{cardNumber} → look up users by card_number
@@ -329,6 +332,10 @@ export async function get(r: DatabaseReference | Query): Promise<DataSnapshot> {
       // so callers receive the config payload directly (matching the old Firebase shape).
       if (parsed.extractValue) {
         return makeSnapshot(data ? (data as any).value : null, refObj.key, refObj);
+      }
+      // Support sub-path field extraction: users/{uid}/role → return just the role value
+      if (parsed.extractField && data) {
+        return makeSnapshot((data as any)[parsed.extractField] ?? null, parsed.extractField, refObj);
       }
       return makeSnapshot(data, refObj.key, refObj);
     }
