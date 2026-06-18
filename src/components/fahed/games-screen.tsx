@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback, Component } from 'react';
+'use client';
+
+import { useState, useEffect, useCallback, Component, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users } from 'lucide-react';
+import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users, Zap, Trophy, Flame } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { supabase, supabaseService } from '@/lib/supabase';
 import {
@@ -307,38 +309,7 @@ function GamesScreenInner() {
             onOrderResult={setOrderResult}
           />
         ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {filteredGames.map((game) => (
-              <button
-                key={game.code || game.id}
-                onClick={() => handleSelectGame(game)}
-                className="glass-card rounded-2xl p-4 card-press text-center"
-              >
-                {game.image_url ? (
-                  <img
-                    src={game.image_url.startsWith('http') ? game.image_url : `https://api.g2bulk.com${game.image_url}`}
-                    alt={game.name || 'Game'}
-                    className="w-16 h-16 rounded-xl mx-auto mb-2 object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                  />
-                ) : (
-                  <div className="w-16 h-16 rounded-xl bg-red-500/10 flex items-center justify-center mx-auto mb-2">
-                    <Gamepad2 className="h-8 w-8 text-red-500" />
-                  </div>
-                )}
-                <p className="text-sm font-medium truncate">{game.name || 'لعبة'}</p>
-              </button>
-            ))}
-            {filteredGames.length === 0 && (
-              <div className="col-span-2 text-center py-12">
-                <Gamepad2 className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">لا توجد ألعاب متاحة</p>
-                {!loadError && (
-                  <p className="text-xs text-muted-foreground mt-1">يرجى التأكد من تفعيل مزود الألعاب</p>
-                )}
-              </div>
-            )}
-          </div>
+          <GamesGrid games={filteredGames} onSelect={handleSelectGame} loadError={loadError} />
         )}
       </div>
 
@@ -685,7 +656,7 @@ function GamePurchaseView({
         </div>
       </div>
 
-      {/* Purchase Button - USD */}
+      {/* Purchase Button */}
       {selectedCatalogue && (
         <button
           onClick={handlePurchase}
@@ -698,6 +669,131 @@ function GamePurchaseView({
             <><ShoppingCart className="h-4 w-4" /> شراء ${(selectedCatalogue.amount || 0).toFixed(2)}</>
           )}
         </button>
+      )}
+    </div>
+  );
+}
+
+// ===== GamesGrid Component (G2Bulk-style) =====
+
+interface GamesGridProps {
+  games: any[];
+  onSelect: (game: any) => void;
+  loadError?: string | null;
+}
+
+function GamesGrid({ games, onSelect, loadError }: GamesGridProps) {
+  const [filter, setFilter] = useState<'all' | 'featured'>('all');
+
+  const displayed = useMemo(() => {
+    if (filter === 'featured') return games.filter(g => g.is_featured || g.isFeatured);
+    return games;
+  }, [games, filter]);
+
+  if (games.length === 0) {
+    return (
+      <div className="col-span-2 flex flex-col items-center justify-center py-16 gap-3">
+        <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Gamepad2 className="h-10 w-10 text-primary" />
+        </div>
+        <p className="text-muted-foreground font-medium">لا توجد ألعاب متاحة</p>
+        {loadError ? (
+          <p className="text-xs text-destructive max-w-xs text-center">{loadError}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">يرجى التأكد من تفعيل مزود الألعاب</p>
+        )}
+      </div>
+    );
+  }
+
+  const featuredGames = games.filter(g => g.is_featured || g.isFeatured);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        {(['all', 'featured'] as const).filter(t => t !== 'featured' || featuredGames.length > 0).map(t => (
+          <button
+            key={t}
+            onClick={() => setFilter(t)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${filter === t ? 'bg-primary text-primary-foreground' : 'bg-muted/50 text-muted-foreground'}`}
+          >
+            {t === 'all' && <><Gamepad2 className="h-3 w-3" /> الكل ({games.length})</>}
+            {t === 'featured' && <><Flame className="h-3 w-3" /> مميزة ({featuredGames.length})</>}
+          </button>
+        ))}
+      </div>
+
+      {filter === 'all' && featuredGames.length > 0 && (
+        <div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Trophy className="h-3.5 w-3.5 text-yellow-500" />
+            <span className="text-xs font-medium text-muted-foreground">الأكثر شعبية</span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+            {featuredGames.map(game => (
+              <button key={game.code || game.id} onClick={() => onSelect(game)}
+                className="flex-none w-28 glass-card rounded-2xl p-2.5 card-press text-center border-2 border-yellow-500/30">
+                <GameImage game={game} size="lg" />
+                <p className="text-xs font-semibold mt-1.5 truncate">{game.name || 'لعبة'}</p>
+                <div className="flex items-center justify-center gap-0.5 mt-0.5">
+                  <Zap className="h-2.5 w-2.5 text-yellow-500" />
+                  <span className="text-[9px] text-yellow-500">مميزة</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-2">
+        {displayed.map((game) => (
+          <motion.button
+            key={game.code || game.id}
+            onClick={() => onSelect(game)}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            whileTap={{ scale: 0.95 }}
+            className="glass-card rounded-2xl p-2.5 card-press text-center relative overflow-hidden"
+          >
+            {(game.is_featured || game.isFeatured) && (
+              <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-yellow-500 flex items-center justify-center">
+                <Star className="h-2.5 w-2.5 text-white fill-white" />
+              </div>
+            )}
+            <GameImage game={game} size="md" />
+            <p className="text-[11px] font-medium mt-1.5 leading-tight line-clamp-2">
+              {game.name || 'لعبة'}
+            </p>
+          </motion.button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GameImage({ game, size }: { game: any; size: 'sm' | 'md' | 'lg' }) {
+  const [failed, setFailed] = useState(false);
+  const sizes = { sm: 'w-10 h-10', md: 'w-14 h-14', lg: 'w-16 h-16' };
+  const iconSizes = { sm: 'h-5 w-5', md: 'h-7 w-7', lg: 'h-8 w-8' };
+
+  const imageUrl = game.image_url
+    ? (game.image_url.startsWith('http') ? game.image_url : `https://api.g2bulk.com${game.image_url}`)
+    : null;
+
+  return (
+    <div className={`${sizes[size]} rounded-xl mx-auto overflow-hidden`}>
+      {!failed && imageUrl ? (
+        <img
+          src={imageUrl}
+          alt={game.name || 'Game'}
+          className="w-full h-full object-cover"
+          onError={() => setFailed(true)}
+          loading="lazy"
+        />
+      ) : (
+        <div className="w-full h-full bg-primary/10 flex items-center justify-center rounded-xl">
+          <Gamepad2 className={`${iconSizes[size]} text-primary`} />
+        </div>
       )}
     </div>
   );

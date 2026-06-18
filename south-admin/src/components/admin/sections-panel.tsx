@@ -23,8 +23,8 @@ import { Label } from '@/components/ui/label';
 import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Trash2, Edit, Layers, ArrowUp, ArrowDown, RotateCcw, Save, RefreshCw, Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Plus, Trash2, Edit, Layers, ArrowUp, ArrowDown, RotateCcw, Save, RefreshCw, Loader2, ChevronDown, ChevronRight, Package, Gamepad2, Code2, Globe, Server } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // Default sections matching user app's serviceIcons keys
 const defaultSections: Partial<DbSection>[] = [
@@ -45,6 +45,9 @@ export default function SectionsPanel() {
   const { showToast } = useAdminStore();
   const [sections, setSections] = useState<DbSection[]>([]);
   const [apiProviders, setApiProviders] = useState<DbApiProvider[]>([]);
+  const [subSectionCounts, setSubSectionCounts] = useState<Record<string, { subs: number; providers: number }>>({});
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [subSections, setSubSections] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<DbSection | null>(null);
@@ -68,6 +71,17 @@ export default function SectionsPanel() {
     const [secs, providers] = await Promise.all([getSections(), getApiProviders()]);
     setSections(secs);
     setApiProviders(providers);
+
+    // Load sub-section and provider counts for each section
+    const counts: Record<string, { subs: number; providers: number }> = {};
+    await Promise.all(secs.map(async (sec) => {
+      const [{ count: subCount }, { count: provCount }] = await Promise.all([
+        supabaseAdmin.from('sub_sections').select('id', { count: 'exact', head: true }).eq('section_id', sec.id),
+        supabaseAdmin.from('service_providers').select('id', { count: 'exact', head: true }).eq('section_id', sec.id),
+      ]);
+      counts[sec.id] = { subs: subCount || 0, providers: provCount || 0 };
+    }));
+    setSubSectionCounts(counts);
     setLoading(false);
   }, []);
 
@@ -85,6 +99,25 @@ export default function SectionsPanel() {
       .subscribe();
     return () => { supabaseAdmin.removeChannel(channel); };
   }, [loadData]);
+
+  const loadSubSections = async (sectionId: string) => {
+    if (subSections[sectionId]) return;
+    const { data } = await supabaseAdmin
+      .from('sub_sections')
+      .select('*')
+      .eq('section_id', sectionId)
+      .order('sort_order');
+    setSubSections(prev => ({ ...prev, [sectionId]: data || [] }));
+  };
+
+  const handleExpand = (sectionId: string) => {
+    if (expandedSection === sectionId) {
+      setExpandedSection(null);
+    } else {
+      setExpandedSection(sectionId);
+      loadSubSections(sectionId);
+    }
+  };
 
   const handleInitializeDefaults = async () => {
     setSaving(true);
@@ -270,43 +303,107 @@ export default function SectionsPanel() {
       <div className="space-y-2">
         {sections.map((s, i) => {
           const provider = apiProviders.find(p => p.id === s.api_provider_id);
+          const counts = subSectionCounts[s.id];
+          const isExpanded = expandedSection === s.id;
+          const subs = subSections[s.id] || [];
           return (
             <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}>
               <Card className="admin-card border-0 shadow-none">
-                <CardContent className="p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex flex-col gap-0.5">
-                      <button onClick={() => handleMove(s, 'up')} className="text-muted-foreground hover:text-foreground"><ArrowUp className="w-3 h-3" /></button>
-                      <button onClick={() => handleMove(s, 'down')} className="text-muted-foreground hover:text-foreground"><ArrowDown className="w-3 h-3" /></button>
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="flex flex-col gap-0.5">
+                        <button onClick={() => handleMove(s, 'up')} className="text-muted-foreground hover:text-foreground"><ArrowUp className="w-3 h-3" /></button>
+                        <button onClick={() => handleMove(s, 'down')} className="text-muted-foreground hover:text-foreground"><ArrowDown className="w-3 h-3" /></button>
+                      </div>
+                      <div className="p-2 rounded-lg" style={{ background: `${s.color || '#5C1A1B'}20` }}>
+                        {s.type === 'games' ? <Gamepad2 className="w-4 h-4" style={{ color: s.color || '#5C1A1B' }} />
+                          : s.type === 'api' ? <Globe className="w-4 h-4" style={{ color: s.color || '#5C1A1B' }} />
+                          : <Layers className="w-4 h-4" style={{ color: s.color || '#5C1A1B' }} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm">{s.name}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-xs text-muted-foreground">{s.id}</p>
+                          {counts && (
+                            <>
+                              {counts.subs > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500">
+                                  {counts.subs} فرعي
+                                </span>
+                              )}
+                              {counts.providers > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-500">
+                                  {counts.providers} مزود
+                                </span>
+                              )}
+                            </>
+                          )}
+                          {provider && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/10 text-purple-500">
+                              <Server className="inline w-2.5 h-2.5 mr-0.5" />{provider.name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="p-2 rounded-lg" style={{ background: `${s.color || '#5C1A1B'}20` }}>
-                      <Layers className="w-4 h-4" style={{ color: s.color || '#5C1A1B' }} />
-                    </div>
-                    <div>
-                      <p className="font-medium text-sm">{s.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        ترتيب: {s.sort_order} | {s.id}
-                        {s.icon ? ` | أيقونة: ${s.icon}` : ''}
-                        {s.type !== 'manual' ? ` | نوع: ${sectionTypes.find(t => t.value === s.type)?.label}` : ''}
-                        {provider ? ` | مزود: ${provider.name}` : ''}
-                      </p>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <Switch checked={s.is_visible} onCheckedChange={() => handleToggle(s)} />
+                      <Badge className={s.is_visible ? 'bg-green-500/20 text-green-600 text-[10px]' : 'bg-red-500/20 text-red-600 text-[10px]'}>
+                        {s.is_visible ? 'ظاهر' : 'مخفي'}
+                      </Badge>
+                      {(counts?.subs || 0) > 0 && (
+                        <button
+                          onClick={() => handleExpand(s.id)}
+                          className="p-1 rounded-lg hover:bg-muted/50 transition-colors"
+                          title="عرض الأقسام الفرعية"
+                        >
+                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        </button>
+                      )}
+                      <Button variant="ghost" size="sm" onClick={() => openDialog(s)}>
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleDelete(s.id)}>
+                        <Trash2 className="w-4 h-4 text-red-500" />
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Switch checked={s.is_visible} onCheckedChange={() => handleToggle(s)} />
-                    <Badge className={s.is_visible ? 'bg-green-500/20 text-green-600' : 'bg-red-500/20 text-red-600'}>
-                      {s.is_visible ? 'ظاهر' : 'مخفي'}
-                    </Badge>
-                    <Badge variant="outline" className="text-xs">
-                      {sectionTypes.find(t => t.value === s.type)?.label || s.type}
-                    </Badge>
-                    <Button variant="ghost" size="sm" onClick={() => openDialog(s)}>
-                      <Edit className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(s.id)}>
-                      <Trash2 className="w-4 h-4 text-red-500" />
-                    </Button>
-                  </div>
+
+                  {/* Expanded sub-sections */}
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mt-3 pt-3 border-t border-border/50">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {subs.map((sub: any) => (
+                              <div key={sub.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/30">
+                                {sub.image_url ? (
+                                  <img src={sub.image_url} alt={sub.name} className="w-7 h-7 rounded object-cover" loading="lazy" />
+                                ) : (
+                                  <div className="w-7 h-7 rounded bg-primary/10 flex items-center justify-center">
+                                    <Package className="w-3.5 h-3.5 text-primary" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium truncate">{sub.name}</p>
+                                  <p className="text-[10px] text-muted-foreground">{sub.type}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {subs.length === 0 && (
+                            <p className="text-xs text-muted-foreground text-center py-2">جاري التحميل...</p>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </CardContent>
               </Card>
             </motion.div>

@@ -61,6 +61,13 @@ import {
   syncProviderToFirebase,
   type ApiProviderConfig,
 } from '@/lib/api-provider';
+import {
+  getApiProvider,
+  fullG2BulkSync,
+  getCachedProviderData,
+  type ApiCategory,
+  type ApiGame,
+} from '@/lib/api-providers';
 
 // ─── Maroon Theme ─────────────────────────────────────────────────────
 const MAROON = {
@@ -116,6 +123,8 @@ export default function ApiProvidersPanel() {
   const [testResult, setTestResult] = useState<{ providerId: string; success: boolean; message: string; balance?: string } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('providers');
+  const [expandedTab, setExpandedTab] = useState<Record<string, 'categories' | 'games' | 'products'>>({});
+  const [providerData, setProviderData] = useState<Record<string, { categories: ApiCategory[]; games: ApiGame[]; products: any[] }>>({});
   const [balanceLogs, setBalanceLogs] = useState<BalanceLogEntry[]>([]);
   const [logFilterProvider, setLogFilterProvider] = useState<string>('all');
   const [checkingAllBalances, setCheckingAllBalances] = useState(false);
@@ -517,17 +526,35 @@ export default function ApiProvidersPanel() {
     showToast(`تم فحص رصيد ${checked} مزود`, 'success');
   };
 
+  // ─── Load provider expanded data from Supabase ────────────────────
+  const loadProviderData = async (providerId: string) => {
+    try {
+      const cached = await getCachedProviderData(providerId);
+      setProviderData(prev => ({ ...prev, [providerId]: cached }));
+    } catch (e) {
+      console.warn('[loadProviderData]', e);
+    }
+  };
+
   // ─── Sync Provider ─────────────────────────────────────────────────
   const handleSync = async (providerId: string) => {
     setSyncingProvider(providerId);
     try {
       const prov = providers[providerId];
+      // 1) Try new api-providers.ts sync first (saves to Supabase)
+      const apiProv = await getApiProvider(providerId);
+      if (apiProv) {
+        const result = await fullG2BulkSync(apiProv);
+        showToast(`تمت المزامنة: ${result.categories} تصنيف، ${result.products} منتج، ${result.games} لعبة`, 'success');
+        await loadProviderData(providerId);
+        return;
+      }
+      // 2) Fallback: legacy Firebase sync
       const config: ApiProviderConfig = {
         id: prov.id, name: prov.name, baseUrl: prov.baseUrl, apiKey: prov.apiKey,
         authHeader: prov.authHeader || 'X-API-Key', method: 'GET', responseFormat: 'json',
         isActive: true, syncEnabled: true, createdAt: prov.createdAt || '',
         sectionId: prov.sectionId || 'service-providers',
-        icon: prov.icon || '',
       };
       const result = await syncProviderToFirebase(config);
       showToast(`تمت المزامنة: ${result.categoriesCount} تصنيف و ${result.productsCount} منتج`, 'success');
@@ -980,53 +1007,140 @@ export default function ApiProvidersPanel() {
                         </div>
                       )}
 
-                      {/* Expanded: Show categories and products */}
+                      {/* Expanded: Show categories, games, products from Supabase */}
                       <AnimatePresence>
-                        {isExpanded && (
-                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                            <div className="mt-3 pt-3 space-y-2 max-h-80 overflow-y-auto" style={{ borderTop: `1px solid ${MAROON.border}`, scrollbarWidth: 'thin' }}>
-                              {categoryCount > 0 ? (
-                                Object.entries(categories).map(([catId, cat]: [string, any]) => {
-                                  const catProducts = cat.products || {};
-                                  const catProductCount = Object.keys(catProducts).length;
-                                  return (
-                                    <div key={catId} className="p-2 rounded-lg" style={{ backgroundColor: MAROON.darkest }}>
-                                      <div className="flex items-center gap-2">
-                                        {cat.icon ? (
-                                          <img src={cat.icon} alt="" className="w-6 h-6 object-contain rounded" />
-                                        ) : (
-                                          <div className="w-6 h-6 rounded flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
-                                            <Server className="w-3 h-3" style={{ color: MAROON.accent }} />
+                        {isExpanded && (() => {
+                          const pd = providerData[prov.id];
+                          const games = pd?.games || [];
+                          const cats = pd?.categories || [];
+                          const prods = pd?.products || [];
+                          const curTab = expandedTab[prov.id] || (games.length > 0 ? 'games' : 'categories');
+
+                          if (!pd) {
+                            loadProviderData(prov.id);
+                            return (
+                              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                                <div className="mt-3 pt-3 flex justify-center py-4" style={{ borderTop: `1px solid ${MAROON.border}` }}>
+                                  <Loader2 className="w-5 h-5 animate-spin" style={{ color: MAROON.accent }} />
+                                </div>
+                              </motion.div>
+                            );
+                          }
+
+                          return (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                              <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${MAROON.border}` }}>
+                                {/* Sub-tabs */}
+                                <div className="flex gap-1 mb-2">
+                                  {games.length > 0 && (
+                                    <button onClick={() => setExpandedTab(prev => ({ ...prev, [prov.id]: 'games' }))}
+                                      className={`text-[11px] px-2.5 py-1 rounded-lg transition-colors ${curTab === 'games' ? 'text-white font-medium' : ''}`}
+                                      style={{ backgroundColor: curTab === 'games' ? MAROON.accent : `${MAROON.accent}20`, color: curTab === 'games' ? '#fff' : MAROON.muted }}>
+                                      🎮 ألعاب ({games.length})
+                                    </button>
+                                  )}
+                                  {cats.length > 0 && (
+                                    <button onClick={() => setExpandedTab(prev => ({ ...prev, [prov.id]: 'categories' }))}
+                                      className="text-[11px] px-2.5 py-1 rounded-lg transition-colors"
+                                      style={{ backgroundColor: curTab === 'categories' ? MAROON.accent : `${MAROON.accent}20`, color: curTab === 'categories' ? '#fff' : MAROON.muted }}>
+                                      📦 تصنيفات ({cats.length})
+                                    </button>
+                                  )}
+                                  {prods.length > 0 && (
+                                    <button onClick={() => setExpandedTab(prev => ({ ...prev, [prov.id]: 'products' }))}
+                                      className="text-[11px] px-2.5 py-1 rounded-lg transition-colors"
+                                      style={{ backgroundColor: curTab === 'products' ? MAROON.accent : `${MAROON.accent}20`, color: curTab === 'products' ? '#fff' : MAROON.muted }}>
+                                      🏷️ منتجات ({prods.length})
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="max-h-72 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+                                  {/* Games Grid */}
+                                  {curTab === 'games' && (
+                                    games.length > 0 ? (
+                                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                                        {games.map(game => (
+                                          <div key={game.code} className="flex flex-col items-center gap-1 p-2 rounded-lg" style={{ backgroundColor: MAROON.darkest }}>
+                                            <div className="w-12 h-12 rounded-lg overflow-hidden flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}15` }}>
+                                              {game.image_url ? (
+                                                <img src={game.image_url} alt={game.name} className="w-full h-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                              ) : (
+                                                <span className="text-2xl">🎮</span>
+                                              )}
+                                            </div>
+                                            <span className="text-[9px] text-center leading-tight" style={{ color: MAROON.muted }}>
+                                              {game.name.length > 12 ? game.name.slice(0, 12) + '...' : game.name}
+                                            </span>
                                           </div>
-                                        )}
-                                        <span className="text-xs font-medium text-white flex-1">{cat.title}</span>
-                                        <Badge variant="outline" className="text-[9px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>{catProductCount} منتج</Badge>
+                                        ))}
                                       </div>
-                                      {catProductCount > 0 && (
-                                        <div className="mt-1.5 grid grid-cols-2 gap-1">
-                                          {Object.entries(catProducts).slice(0, 6).map(([prodId, prod]: [string, any]) => (
-                                            <div key={prodId} className="text-[10px] px-1.5 py-0.5 rounded truncate" style={{ backgroundColor: MAROON.bg, color: MAROON.muted }}>
-                                              {prod.title} - {prod.unit_price}$
+                                    ) : (
+                                      <p className="text-xs text-center py-4" style={{ color: MAROON.muted }}>لا توجد ألعاب. اضغط مزامنة</p>
+                                    )
+                                  )}
+
+                                  {/* Categories Grid */}
+                                  {curTab === 'categories' && (
+                                    cats.length > 0 ? (
+                                      <div className="grid grid-cols-2 gap-2">
+                                        {cats.map(cat => (
+                                          <div key={cat.id} className="flex items-center gap-2 p-2 rounded-lg" style={{ backgroundColor: MAROON.darkest }}>
+                                            {cat.image_url ? (
+                                              <img src={cat.image_url} alt={cat.title} className="w-8 h-8 object-cover rounded" loading="lazy" />
+                                            ) : (
+                                              <div className="w-8 h-8 rounded flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+                                                <Server className="w-4 h-4" style={{ color: MAROON.accent }} />
+                                              </div>
+                                            )}
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-xs font-medium text-white truncate">{cat.title}</p>
+                                              <p className="text-[10px]" style={{ color: MAROON.muted }}>{cat.product_count} منتج</p>
                                             </div>
-                                          ))}
-                                          {catProductCount > 6 && (
-                                            <div className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: MAROON.bg, color: MAROON.muted }}>
-                                              +{catProductCount - 6} المزيد
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-center py-4" style={{ color: MAROON.muted }}>لا توجد تصنيفات. اضغط مزامنة</p>
+                                    )
+                                  )}
+
+                                  {/* Products List */}
+                                  {curTab === 'products' && (
+                                    prods.length > 0 ? (
+                                      <div className="space-y-1">
+                                        {prods.slice(0, 20).map(prod => (
+                                          <div key={prod.id} className="flex items-center gap-2 px-2 py-1.5 rounded" style={{ backgroundColor: MAROON.darkest }}>
+                                            {prod.image_url ? (
+                                              <img src={prod.image_url} alt={prod.title} className="w-6 h-6 object-cover rounded" loading="lazy" />
+                                            ) : (
+                                              <div className="w-6 h-6 rounded" style={{ backgroundColor: `${MAROON.accent}20` }} />
+                                            )}
+                                            <span className="text-xs text-white flex-1 truncate">{prod.title}</span>
+                                            <span className="text-[10px] font-medium" style={{ color: MAROON.accent }}>{prod.unit_price}$</span>
+                                          </div>
+                                        ))}
+                                        {prods.length > 20 && (
+                                          <p className="text-[10px] text-center py-1" style={{ color: MAROON.muted }}>+{prods.length - 20} منتج إضافي</p>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-center py-4" style={{ color: MAROON.muted }}>لا توجد منتجات. اضغط مزامنة</p>
+                                    )
+                                  )}
+
+                                  {games.length === 0 && cats.length === 0 && prods.length === 0 && (
+                                    <div className="text-center py-6">
+                                      <RefreshCw className="w-8 h-8 mx-auto mb-2" style={{ color: MAROON.muted }} />
+                                      <p className="text-xs" style={{ color: MAROON.muted }}>لم يتم مزامنة البيانات بعد</p>
+                                      <button onClick={() => handleSync(prov.id)} className="mt-2 text-xs px-3 py-1 rounded-lg" style={{ backgroundColor: MAROON.accent, color: '#fff' }}>مزامنة الآن</button>
                                     </div>
-                                  );
-                                })
-                              ) : (
-                                <p className="text-xs text-center py-4" style={{ color: MAROON.muted }}>
-                                  لم يتم مزامنة التصنيفات بعد. اضغط على زر المزامنة
-                                </p>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
+                                  )}
+                                </div>
+                              </div>
+                            </motion.div>
+                          );
+                        })()}
                       </AnimatePresence>
                     </CardContent>
                   </Card>

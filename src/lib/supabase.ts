@@ -777,6 +777,69 @@ export const supabaseService = {
     return data as DbApiCategory[];
   },
 
+  // --- API Games (من الجدول المخصص للألعاب) ---
+  async getApiGames(providerId?: string, featured?: boolean) {
+    let query = supabase
+      .from('api_games')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order');
+    if (providerId) query = query.eq('api_provider_id', providerId);
+    if (featured) query = query.eq('is_featured', true);
+    const { data, error } = await query;
+    if (error) {
+      // Fallback: جلب الألعاب من api_categories
+      const { data: cats } = await supabase
+        .from('api_categories')
+        .select('*')
+        .eq('is_active', true)
+        .like('api_category_id', 'game_%');
+      return (cats || []).map(c => ({
+        id: c.id,
+        api_provider_id: c.api_provider_id,
+        game_code: c.api_category_id.replace('game_', ''),
+        name: c.title,
+        name_ar: c.title,
+        image_url: c.image_url || '',
+        is_active: true,
+        is_featured: false,
+      }));
+    }
+    return data || [];
+  },
+
+  // --- API Game Catalogues ---
+  async getGameCatalogues(providerId: string, gameCode: string) {
+    const { data, error } = await supabase
+      .from('api_game_catalogues')
+      .select('*')
+      .eq('api_provider_id', providerId)
+      .eq('game_code', gameCode)
+      .eq('is_active', true)
+      .order('sort_order');
+    if (error) throw error;
+    return data || [];
+  },
+
+  // --- Sections Summary (مع الأقسام الفرعية وعدد المزودين) ---
+  async getSectionsWithStats() {
+    const { data, error } = await supabase.rpc('get_sections_with_data');
+    if (error) {
+      // Fallback: جلب الأقسام العادية
+      return await supabaseService.getSections();
+    }
+    return data || [];
+  },
+
+  // --- Sub Sections With Counts ---
+  async getSubSectionsWithCounts(sectionId: string) {
+    const { data, error } = await supabase.rpc('get_sub_sections_with_counts', { p_section_id: sectionId });
+    if (error) {
+      return await supabaseService.getSubSections(sectionId);
+    }
+    return data || [];
+  },
+
   // --- Exchange Rates ---
   async getExchangeRates() {
     const { data, error } = await supabase.from('exchange_rates').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1);

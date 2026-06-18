@@ -4,6 +4,11 @@
 
 import { supabase } from './supabase';
 
+// ===== Constants =====
+export const G2BULK_API_KEY = process.env.NEXT_PUBLIC_G2BULK_API_KEY
+  || '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45';
+export const G2BULK_BASE_URL = 'https://api.g2bulk.com';
+
 // ===== Types =====
 
 export interface ApiProvider {
@@ -26,9 +31,8 @@ export interface ApiProvider {
   color: string;
   createdAt: string;
   updatedAt: string;
-  // Custom headers for other APIs
-  authHeaderName: string; // e.g., 'X-API-Key', 'Authorization', 'Bearer'
-  authHeaderPrefix: string; // e.g., '', 'Bearer ', 'Key '
+  authHeaderName: string;
+  authHeaderPrefix: string;
 }
 
 export interface ApiCategory {
@@ -62,15 +66,25 @@ export interface ApiGame {
   id: number;
   code: string;
   name: string;
+  name_ar?: string;
   image_url: string;
+  banner_url?: string;
+  description?: string;
   provider_id: string;
   enabled: boolean;
+  is_featured?: boolean;
+  fields?: string[];
+  servers?: Record<string, string>;
+  tags?: string[];
 }
 
 export interface ApiGameCatalogue {
-  id: number;
+  id: number | string;
   name: string;
+  name_ar?: string;
   amount: number;
+  currency?: string;
+  image_url?: string;
   provider_id: string;
 }
 
@@ -148,11 +162,7 @@ export async function getApiProvider(providerId: string): Promise<ApiProvider | 
     .eq('id', providerId)
     .single();
 
-  if (error) {
-    console.error('Error fetching API provider:', error);
-    return null;
-  }
-
+  if (error) return null;
   return data ? mapDbProviderToApiProvider(data) : null;
 }
 
@@ -161,33 +171,27 @@ export async function saveApiProvider(provider: Partial<ApiProvider> & { name: s
   const dbData = mapApiProviderToDb(provider, now);
 
   if (provider.id) {
-    // Update existing provider
     const { data, error } = await supabase
       .from('api_providers')
       .update(dbData)
       .eq('id', provider.id)
       .select()
       .single();
-
     if (error) throw error;
     return data.id;
   } else {
-    // Create new provider
     const { data, error } = await supabase
       .from('api_providers')
       .insert(dbData)
       .select()
       .single();
-
     if (error) throw error;
     return data.id;
   }
 }
 
 export async function deleteApiProvider(providerId: string): Promise<void> {
-  // Also clean up cached data
   await supabase.from('api_categories').delete().eq('api_provider_id', providerId);
-
   const { error } = await supabase.from('api_providers').delete().eq('id', providerId);
   if (error) throw error;
 }
@@ -197,7 +201,6 @@ export async function toggleApiProvider(providerId: string, enabled: boolean): P
     .from('api_providers')
     .update({ is_active: enabled, updated_at: new Date().toISOString() })
     .eq('id', providerId);
-
   if (error) throw error;
 }
 
@@ -218,10 +221,7 @@ async function apiRequest<T>(
   };
 
   const options: RequestInit = { method, headers };
-
-  if (body && method === 'POST') {
-    options.body = JSON.stringify(body);
-  }
+  if (body && method === 'POST') options.body = JSON.stringify(body);
 
   const baseUrl = provider.baseUrl.replace(/\/$/, '');
   const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
@@ -229,13 +229,35 @@ async function apiRequest<T>(
   const response = await fetch(url, options);
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error (${response.status}): ${errorText}`);
+    const errorText = await response.text().catch(() => 'Unknown error');
+    const status = response.status;
+    const lower = errorText.toLowerCase();
+    let userMessage = '';
+    if (status === 401 || status === 403) {
+      userMessage = 'مفتاح API الخاص بالمزود غير صالح أو منتهي الصلاحية.';
+    } else if (status === 402 || status === 406 || lower.includes('insufficient') || lower.includes('balance')) {
+      userMessage = 'رصيد المزود غير كافٍ لإتمام هذه العملية. يرجى المحاولة لاحقاً.';
+    } else if (status === 429) {
+      userMessage = 'تم تجاوز الحد المسموح للطلبات. يرجى المحاولة بعد دقيقة.';
+    } else if (status >= 500) {
+      userMessage = 'خدمة المزود غير متاحة مؤقتاً. يرجى المحاولة لاحقاً.';
+    }
+    const err = new Error(userMessage || `API error (${status}): ${errorText}`);
+    (err as any).providerError = true;
+    (err as any).status = status;
+    throw err;
   }
 
   const data = await response.json();
   if (data.success === false) {
-    throw new Error(data.message || data.detail?.message || 'API request failed');
+    const msg: string = String(data.message || data.detail?.message || 'فشل الطلب من المزود');
+    const lower = msg.toLowerCase();
+    const userMessage = (lower.includes('insufficient') || lower.includes('balance'))
+      ? 'رصيد المزود غير كافٍ لإتمام هذه العملية. يرجى المحاولة لاحقاً.'
+      : msg;
+    const err = new Error(userMessage);
+    (err as any).providerError = true;
+    throw err;
   }
   return data as T;
 }
@@ -243,14 +265,18 @@ async function apiRequest<T>(
 // ===== G2Bulk Specific Functions =====
 
 export async function getG2BulkBalance(provider: ApiProvider): Promise<ProviderBalance> {
-  const data = await apiRequest<any>(provider, '/v1/getMe');
-  return {
-    success: data.success,
-    user_id: data.user_id,
-    username: data.username,
-    balance: data.balance,
-    currency: 'USD',
-  };
+  try {
+    const data = await apiRequest<any>(provider, '/v1/getMe');
+    return {
+      success: data.success ?? true,
+      user_id: data.user_id,
+      username: data.username,
+      balance: data.balance ?? 0,
+      currency: 'USD',
+    };
+  } catch {
+    return { success: false, balance: 0, currency: 'USD' };
+  }
 }
 
 export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCategory[]> {
@@ -265,25 +291,52 @@ export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCa
     enabled: true,
   }));
 
-  // Cache to Supabase
-  for (const cat of categories) {
+  // مزامنة دفعية أسرع عبر upsert مجمّع
+  const catRows = categories.map(cat => ({
+    api_provider_id: provider.id,
+    api_category_id: String(cat.id),
+    title: cat.title,
+    title_en: cat.title,
+    description: cat.description,
+    image_url: cat.image_url,
+    product_count: cat.product_count,
+    category_type: 'product',
+    is_active: true,
+    is_synced: true,
+    last_synced_at: new Date().toISOString(),
+  }));
+
+  if (catRows.length > 0) {
     await supabase
       .from('api_categories')
-      .upsert({
-        api_provider_id: provider.id,
-        api_category_id: String(cat.id),
-        title: cat.title,
-        title_en: cat.title,
-        description: cat.description,
-        image_url: cat.image_url,
-        product_count: cat.product_count,
-        is_active: true,
-        is_synced: true,
-        last_synced_at: new Date().toISOString(),
-      }, { onConflict: 'api_provider_id,api_category_id' });
+      .upsert(catRows, { onConflict: 'api_provider_id,api_category_id' });
   }
 
-  // Update last sync
+  // إنشاء أقسام للفئات
+  const sectionRows = categories.map(cat => ({
+    id: `g2bulk-cat-${cat.id}`,
+    name: cat.title,
+    name_en: cat.title,
+    description: cat.description || '',
+    icon: cat.image_url || '',
+    image_url: cat.image_url || '',
+    type: 'api' as const,
+    api_provider_id: provider.id,
+    api_category_id: String(cat.id),
+    api_section_type: 'products',
+    is_active: true,
+    show_in_services: true,
+    show_in_home: false,
+    sort_order: 1000 + cat.id,
+    updated_at: new Date().toISOString(),
+  }));
+
+  if (sectionRows.length > 0) {
+    await supabase
+      .from('sections')
+      .upsert(sectionRows, { onConflict: 'id' });
+  }
+
   await supabase
     .from('api_providers')
     .update({ last_sync_at: new Date().toISOString() })
@@ -307,37 +360,83 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
     enabled: true,
   }));
 
-  // Cache to Supabase - using product_packages table
-  for (const prod of products) {
-    const { data: existingProvider } = await supabase
-      .from('service_providers')
-      .select('id')
-      .eq('api_product_id', String(prod.id))
-      .eq('api_provider_id', provider.id)
-      .single();
+  // مزامنة دفعية: نجمع كل المنتجات أولاً ثم نُضيفها دفعة واحدة
+  const serviceProviderRows: any[] = [];
+  const packageRows: any[] = [];
+  const apiProductRows: any[] = [];
 
-    if (existingProvider) {
-      // Update packages for this provider
-      await supabase
-        .from('product_packages')
-        .upsert({
-          provider_id: existingProvider.id,
-          name: prod.title,
-          name_en: prod.title,
-          description: prod.description,
-          price_usd: prod.unit_price,
-          price_yer: 0, // USD only
-          price_sar: 0, // USD only
-          cost_price: prod.unit_price,
-          cost_currency: 'USD',
-          execution_type: 'api',
-          api_product_id: String(prod.id),
-          is_active: true,
-        }, { onConflict: 'provider_id,api_product_id' });
-    }
+  for (const prod of products) {
+    const spId = `g2bulk-prod-${provider.id}-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const pkgId = `g2bulk-pkg-${provider.id}-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const sectionId = `g2bulk-cat-${prod.category_id}`;
+
+    serviceProviderRows.push({
+      id: spId,
+      name: prod.title || `منتج ${prod.id}`,
+      name_en: prod.title || `Product ${prod.id}`,
+      description: prod.description || '',
+      section_id: sectionId,
+      sub_section_id: null,
+      api_product_id: String(prod.id),
+      api_provider_id: provider.id,
+      icon: prod.image_url || 'package',
+      image_url: prod.image_url || null,
+      color: '#8B5CF6',
+      is_active: true,
+      sort_order: prod.id,
+      execution_type: 'api',
+    });
+
+    packageRows.push({
+      id: pkgId,
+      provider_id: spId,
+      name: prod.title || `منتج ${prod.id}`,
+      name_en: prod.title || `Product ${prod.id}`,
+      description: prod.description || '',
+      price_usd: prod.unit_price || 0,
+      price_yer: 0,
+      price_sar: 0,
+      cost_price: prod.unit_price || 0,
+      cost_currency: 'USD',
+      execution_type: 'api',
+      api_product_id: String(prod.id),
+      image_url: prod.image_url || null,
+      is_active: true,
+    });
+
+    apiProductRows.push({
+      api_provider_id: provider.id,
+      api_category_id: String(prod.category_id),
+      api_product_id: String(prod.id),
+      name: prod.title || `Product ${prod.id}`,
+      name_en: prod.title || `Product ${prod.id}`,
+      description: prod.description || '',
+      price: prod.unit_price || 0,
+      currency: 'USD',
+      image_url: prod.image_url || '',
+      is_active: true,
+      is_synced: true,
+      last_synced_at: new Date().toISOString(),
+      provider_id: spId,
+      package_id: pkgId,
+      product_data: prod,
+    });
   }
 
-  // Update last sync
+  // دفعات بـ 100 سجل للتجنب تجاوز حجم الطلب
+  const BATCH = 100;
+  for (let i = 0; i < serviceProviderRows.length; i += BATCH) {
+    await supabase.from('service_providers').upsert(serviceProviderRows.slice(i, i + BATCH), { onConflict: 'id' });
+  }
+  for (let i = 0; i < packageRows.length; i += BATCH) {
+    await supabase.from('product_packages').upsert(packageRows.slice(i, i + BATCH), { onConflict: 'id' });
+  }
+  for (let i = 0; i < apiProductRows.length; i += BATCH) {
+    await supabase.from('api_products').upsert(apiProductRows.slice(i, i + BATCH), { onConflict: 'api_provider_id,api_product_id' }).then(({ error }) => {
+      if (error) console.warn('api_products upsert warning:', error.message);
+    });
+  }
+
   await supabase
     .from('api_providers')
     .update({ last_sync_at: new Date().toISOString() })
@@ -352,29 +451,82 @@ export async function syncG2BulkGames(provider: ApiProvider): Promise<ApiGame[]>
     id: game.id,
     code: game.code,
     name: game.name,
+    name_ar: game.name,
     image_url: game.image_url || '',
+    banner_url: game.banner_url || game.image_url || '',
+    description: game.description || '',
     provider_id: provider.id,
     enabled: true,
+    is_featured: false,
+    tags: game.tags || [],
   }));
 
-  // Cache to Supabase
-  for (const game of games) {
-    await supabase
-      .from('api_categories')
-      .upsert({
-        api_provider_id: provider.id,
-        api_category_id: `game_${game.code}`,
-        title: game.name,
-        title_en: game.name,
-        description: `Game: ${game.name}`,
-        image_url: game.image_url,
-        is_active: true,
-        is_synced: true,
-        last_synced_at: new Date().toISOString(),
-      }, { onConflict: 'api_provider_id,api_category_id' });
+  // مزامنة في جدول api_games المخصص للألعاب
+  const gameRows = games.map(game => ({
+    id: `${provider.id}-${game.code}`,
+    api_provider_id: provider.id,
+    game_code: game.code,
+    name: game.name,
+    name_ar: game.name,
+    image_url: game.image_url || '',
+    banner_url: game.banner_url || game.image_url || '',
+    description: game.description || '',
+    is_active: true,
+    tags: game.tags || [],
+    updated_at: new Date().toISOString(),
+  }));
+
+  if (gameRows.length > 0) {
+    const BATCH = 100;
+    for (let i = 0; i < gameRows.length; i += BATCH) {
+      await supabase.from('api_games')
+        .upsert(gameRows.slice(i, i + BATCH), { onConflict: 'api_provider_id,game_code' });
+    }
   }
 
-  // Update last sync
+  // أيضاً في api_categories للتوافق مع الكود القديم
+  const catRows = games.map(game => ({
+    api_provider_id: provider.id,
+    api_category_id: `game_${game.code}`,
+    title: game.name,
+    title_en: game.name,
+    description: game.description || `لعبة: ${game.name}`,
+    image_url: game.image_url || '',
+    category_type: 'game',
+    game_code: game.code,
+    is_active: true,
+    is_synced: true,
+    last_synced_at: new Date().toISOString(),
+  }));
+
+  if (catRows.length > 0) {
+    const BATCH = 100;
+    for (let i = 0; i < catRows.length; i += BATCH) {
+      await supabase.from('api_categories')
+        .upsert(catRows.slice(i, i + BATCH), { onConflict: 'api_provider_id,api_category_id' });
+    }
+  }
+
+  // قسم رئيسي واحد للألعاب يظهر في الصفحة الرئيسية
+  await supabase
+    .from('sections')
+    .upsert({
+      id: `g2bulk-games-${provider.id}`,
+      name: 'الألعاب',
+      name_en: 'Games',
+      description: 'شحن الألعاب الإلكترونية',
+      icon: '🎮',
+      image_url: '',
+      type: 'api' as const,
+      api_provider_id: provider.id,
+      api_section_type: 'games',
+      is_active: true,
+      show_in_home: true,
+      show_in_services: true,
+      sort_order: 900,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
   await supabase
     .from('api_providers')
     .update({ last_sync_at: new Date().toISOString() })
@@ -388,26 +540,58 @@ export async function fullG2BulkSync(provider: ApiProvider): Promise<{
   products: number;
   games: number;
 }> {
-  const [categories, products, games] = await Promise.all([
+  const [categories, games, products] = await Promise.allSettled([
     syncG2BulkCategories(provider),
-    syncG2BulkProducts(provider),
     syncG2BulkGames(provider),
+    syncG2BulkProducts(provider),
   ]);
+
   return {
-    categories: categories.length,
-    products: products.length,
-    games: games.length,
+    categories: categories.status === 'fulfilled' ? categories.value.length : 0,
+    products: products.status === 'fulfilled' ? products.value.length : 0,
+    games: games.status === 'fulfilled' ? games.value.length : 0,
   };
+}
+
+export async function syncAllProviders(): Promise<{
+  totalCategories: number;
+  totalProducts: number;
+  totalGames: number;
+  errors: string[];
+}> {
+  const providers = await getApiProviders();
+  const activeProviders = providers.filter(p => p.enabled);
+  const errors: string[] = [];
+  let totalCategories = 0;
+  let totalProducts = 0;
+  let totalGames = 0;
+
+  for (const provider of activeProviders) {
+    try {
+      const result = await fullG2BulkSync(provider);
+      totalCategories += result.categories;
+      totalProducts += result.products;
+      totalGames += result.games;
+    } catch (error: any) {
+      errors.push(`Provider ${provider.name}: ${error.message}`);
+    }
+  }
+
+  return { totalCategories, totalProducts, totalGames, errors };
 }
 
 // ===== Game Top-up Functions =====
 
 export async function getGameFields(provider: ApiProvider, gameCode: string): Promise<ApiGameFields> {
-  const data = await apiRequest<any>(provider, '/v1/games/fields', 'POST', { game: gameCode });
-  return {
-    fields: data.info?.fields || data.fields || [],
-    notes: data.info?.notes || data.notes || '',
-  };
+  try {
+    const data = await apiRequest<any>(provider, '/v1/games/fields', 'POST', { game: gameCode });
+    return {
+      fields: data.info?.fields || data.fields || [],
+      notes: data.info?.notes || data.notes || '',
+    };
+  } catch {
+    return { fields: [], notes: '' };
+  }
 }
 
 export async function getGameServers(provider: ApiProvider, gameCode: string): Promise<ApiGameServer> {
@@ -415,9 +599,7 @@ export async function getGameServers(provider: ApiProvider, gameCode: string): P
     const data = await apiRequest<any>(provider, '/v1/games/servers', 'POST', { game: gameCode });
     return data.servers || {};
   } catch (error: any) {
-    if (error.message?.includes('403') || error.message?.includes('does not require')) {
-      return {};
-    }
+    if (error.message?.includes('403') || error.message?.includes('does not require')) return {};
     throw error;
   }
 }
@@ -442,13 +624,62 @@ export async function checkPlayerId(
 }
 
 export async function getGameCatalogue(provider: ApiProvider, gameCode: string): Promise<ApiGameCatalogue[]> {
-  const data = await apiRequest<{ success: boolean; catalogues: any[] }>(provider, `/v1/games/${gameCode}/catalogue`);
-  return (data.catalogues || []).map((cat: any) => ({
+  // أولاً: محاولة من الكاش في Supabase
+  const { data: cached } = await supabase
+    .from('api_game_catalogues')
+    .select('*')
+    .eq('api_provider_id', provider.id)
+    .eq('game_code', gameCode)
+    .eq('is_active', true)
+    .order('sort_order');
+
+  if (cached && cached.length > 0) {
+    return cached.map(c => ({
+      id: c.catalogue_id,
+      name: c.name,
+      name_ar: c.name_ar || c.name,
+      amount: c.amount,
+      currency: c.currency || 'USD',
+      image_url: c.image_url || '',
+      provider_id: provider.id,
+    }));
+  }
+
+  // إذا لم يوجد كاش، جلب من API
+  const data = await apiRequest<{ success: boolean; catalogues: any[] }>(
+    provider, `/v1/games/${gameCode}/catalogue`
+  );
+
+  const catalogues: ApiGameCatalogue[] = (data.catalogues || []).map((cat: any) => ({
     id: cat.id,
     name: cat.name,
+    name_ar: cat.name,
     amount: cat.amount,
+    currency: 'USD',
+    image_url: cat.image_url || '',
     provider_id: provider.id,
   }));
+
+  // حفظ في الكاش
+  if (catalogues.length > 0) {
+    const rows = catalogues.map((cat, idx) => ({
+      id: `${provider.id}-${gameCode}-${cat.id}`,
+      api_provider_id: provider.id,
+      game_code: gameCode,
+      catalogue_id: String(cat.id),
+      name: cat.name,
+      name_ar: cat.name,
+      amount: cat.amount,
+      currency: 'USD',
+      image_url: cat.image_url || '',
+      is_active: true,
+      sort_order: idx,
+    }));
+    await supabase.from('api_game_catalogues')
+      .upsert(rows, { onConflict: 'api_provider_id,game_code,catalogue_id' });
+  }
+
+  return catalogues;
 }
 
 export async function placeGameOrder(
@@ -460,10 +691,7 @@ export async function placeGameOrder(
   charname?: string,
   remark?: string
 ): Promise<GameOrderResult> {
-  const body: Record<string, any> = {
-    catalogue_name: catalogueName,
-    player_id: playerId,
-  };
+  const body: Record<string, any> = { catalogue_name: catalogueName, player_id: playerId };
   if (serverId) body.server_id = serverId;
   if (charname) body.charname = charname;
   if (remark) body.remark = remark;
@@ -493,23 +721,19 @@ export async function checkGameOrderStatus(
 export async function purchaseProduct(
   provider: ApiProvider,
   productId: number,
-  quantity: number = 1
+  quantity: number = 1,
+  customerId?: string
 ): Promise<PurchaseResult> {
-  return apiRequest<PurchaseResult>(provider, `/v1/products/${productId}/purchase`, 'POST', { quantity });
+  const body: Record<string, any> = { quantity };
+  if (customerId) body.customer_id = customerId;
+  return apiRequest<PurchaseResult>(provider, `/v1/products/${productId}/purchase`, 'POST', body);
 }
 
-export async function checkOrderDelivery(
-  provider: ApiProvider,
-  orderId: number
-): Promise<PurchaseResult> {
+export async function checkOrderDelivery(provider: ApiProvider, orderId: number): Promise<PurchaseResult> {
   return apiRequest<PurchaseResult>(provider, `/v1/orders/${orderId}/delivery`);
 }
 
-export async function getOrderHistory(
-  provider: ApiProvider,
-  page: number = 1,
-  limit: number = 50
-): Promise<any> {
+export async function getOrderHistory(provider: ApiProvider, page: number = 1, limit: number = 50): Promise<any> {
   return apiRequest<any>(provider, `/v1/orders?page=${page}&limit=${limit}`);
 }
 
@@ -517,26 +741,19 @@ export async function getOrderHistory(
 
 export function subscribeToProviderCache(
   providerId: string,
-  callback: (data: {
-    categories: ApiCategory[];
-    products: ApiProduct[];
-    games: ApiGame[];
-  }) => void
+  callback: (data: { categories: ApiCategory[]; products: ApiProduct[]; games: ApiGame[] }) => void
 ): () => void {
-  // Initial load
   getCachedProviderData(providerId).then(callback);
 
-  // Subscribe to realtime changes
   const channel = supabase
-    .channel(`provider-cache-${providerId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'api_categories', filter: `api_provider_id=eq.${providerId}` }, () => {
-      getCachedProviderData(providerId).then(callback);
-    })
+    .channel(`provider-cache-${providerId}-${Date.now()}`)
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'api_categories',
+      filter: `api_provider_id=eq.${providerId}`
+    }, () => getCachedProviderData(providerId).then(callback))
     .subscribe();
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
+  return () => { try { supabase.removeChannel(channel); } catch {} };
 }
 
 export async function getCachedProviderData(providerId: string): Promise<{
@@ -544,37 +761,47 @@ export async function getCachedProviderData(providerId: string): Promise<{
   products: ApiProduct[];
   games: ApiGame[];
 }> {
-  // Fetch categories from Supabase
+  // جلب الألعاب من جدول api_games المخصص
+  const { data: gamesData } = await supabase
+    .from('api_games')
+    .select('*')
+    .eq('api_provider_id', providerId)
+    .eq('is_active', true)
+    .order('sort_order');
+
+  const games: ApiGame[] = (gamesData || []).map(g => ({
+    id: g.id,
+    code: g.game_code,
+    name: g.name,
+    name_ar: g.name_ar || g.name,
+    image_url: g.image_url || '',
+    banner_url: g.banner_url || g.image_url || '',
+    description: g.description || '',
+    provider_id: providerId,
+    enabled: g.is_active,
+    is_featured: g.is_featured,
+    tags: g.tags || [],
+  }));
+
+  // جلب الفئات (غير الألعاب)
   const { data: catData } = await supabase
     .from('api_categories')
     .select('*')
     .eq('api_provider_id', providerId)
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .neq('category_type', 'game');
 
-  const categories: ApiCategory[] = (catData || [])
-    .filter(c => !c.api_category_id?.startsWith('game_'))
-    .map(c => ({
-      id: Number(c.api_category_id),
-      title: c.title || '',
-      description: c.description || '',
-      image_url: c.image_url || null,
-      product_count: c.product_count || 0,
-      provider_id: providerId,
-      enabled: c.is_active ?? true,
-    }));
+  const categories: ApiCategory[] = (catData || []).map(c => ({
+    id: Number(c.api_category_id),
+    title: c.title || '',
+    description: c.description || '',
+    image_url: c.image_url || null,
+    product_count: c.product_count || 0,
+    provider_id: providerId,
+    enabled: c.is_active ?? true,
+  }));
 
-  const games: ApiGame[] = (catData || [])
-    .filter(c => c.api_category_id?.startsWith('game_'))
-    .map(c => ({
-      id: Number(c.api_category_id.replace('game_', '')),
-      code: c.api_category_id.replace('game_', ''),
-      name: c.title || '',
-      image_url: c.image_url || '',
-      provider_id: providerId,
-      enabled: c.is_active ?? true,
-    }));
-
-  // Fetch products from Supabase
+  // جلب المنتجات
   const { data: providerData } = await supabase
     .from('service_providers')
     .select('id')
@@ -596,11 +823,32 @@ export async function getCachedProviderData(providerId: string): Promise<{
       category_id: 0,
       category_title: '',
       unit_price: pkg.price_usd || 0,
-      image_url: null,
+      image_url: pkg.image_url || null,
       stock: 999,
       provider_id: providerId,
       enabled: true,
     }));
+  }
+
+  // إذا لم تُوجد ألعاب في api_games، جرّب api_categories كـ fallback
+  if (games.length === 0) {
+    const { data: legacyGames } = await supabase
+      .from('api_categories')
+      .select('*')
+      .eq('api_provider_id', providerId)
+      .eq('is_active', true)
+      .like('api_category_id', 'game_%');
+
+    const legacyMapped: ApiGame[] = (legacyGames || []).map(c => ({
+      id: 0,
+      code: c.api_category_id.replace('game_', ''),
+      name: c.title || '',
+      image_url: c.image_url || '',
+      provider_id: providerId,
+      enabled: c.is_active ?? true,
+    }));
+
+    return { categories, products, games: legacyMapped };
   }
 
   return { categories, products, games };
@@ -616,11 +864,7 @@ export async function testProviderConnection(provider: ApiProvider): Promise<{
 }> {
   try {
     const balance = await getG2BulkBalance(provider);
-    return {
-      success: true,
-      balance: balance.balance,
-      username: balance.username,
-    };
+    return { success: balance.success, balance: balance.balance, username: balance.username };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
@@ -630,15 +874,13 @@ export async function testProviderConnection(provider: ApiProvider): Promise<{
 
 export async function initializeDefaultProviders(): Promise<void> {
   const providers = await getApiProviders();
-  const g2bulkExists = providers.some(p => p.type === 'g2bulk');
-
-  if (!g2bulkExists) {
+  if (!providers.some(p => p.type === 'g2bulk')) {
     await saveApiProvider({
       name: 'G2Bulk',
       nameAr: 'G2Bulk',
       type: 'g2bulk',
-      apiKey: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45',
-      baseUrl: 'https://api.g2bulk.com',
+      apiKey: G2BULK_API_KEY,
+      baseUrl: G2BULK_BASE_URL,
       enabled: true,
       markupPercent: 16,
       supportsProducts: true,
@@ -656,7 +898,6 @@ export async function initializeDefaultProviders(): Promise<void> {
 // ===== Mapping Functions =====
 
 function mapDbProviderToApiProvider(db: any): ApiProvider {
-  const config = db.config || {};
   return {
     id: db.id,
     name: db.name || '',
@@ -674,7 +915,7 @@ function mapDbProviderToApiProvider(db: any): ApiProvider {
     description: db.description || '',
     descriptionAr: db.description || '',
     logo: db.website || '',
-    color: '#8B1E3A',
+    color: db.config?.color || '#8B1E3A',
     createdAt: db.created_at || '',
     updatedAt: db.updated_at || '',
     authHeaderName: db.auth_header || 'X-API-Key',
@@ -698,10 +939,7 @@ function mapApiProviderToDb(provider: Partial<ApiProvider> & { name: string }, n
     commission_type: 'percentage',
     sync_categories: provider.supportsGames ?? true,
     sync_products: provider.supportsProducts ?? true,
-    config: {
-      type: provider.type || 'custom',
-      color: provider.color || '#8B1E3A',
-    },
+    config: { type: provider.type || 'custom', color: provider.color || '#8B1E3A' },
     updated_at: now,
   };
 }

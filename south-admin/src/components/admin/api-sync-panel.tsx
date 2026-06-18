@@ -1,203 +1,355 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAdminStore } from '@/lib/store';
-import { cn } from '@/lib/utils';
-import { database } from '@/lib/db-compat';
-import { ref, onValue, get } from '@/lib/db-compat';
+import { supabase } from '@/lib/supabase';
+import {
+  getApiProviders,
+  fullG2BulkSync,
+  syncAllProviders,
+  testProviderConnection,
+  type ApiProvider,
+} from '@/lib/api-providers';
 import {
   RefreshCw,
   Server,
   CheckCircle2,
   XCircle,
   Clock,
-  ArrowRight,
   Zap,
   AlertTriangle,
+  Database,
+  Gamepad2,
+  Package,
+  Layers,
+  Loader2,
+  Play,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-interface SyncProvider {
+interface ProviderStats {
   id: string;
   name: string;
   lastSync: string | null;
   status: 'synced' | 'syncing' | 'error' | 'never';
-  autoSync: boolean;
+  categories: number;
+  games: number;
+  products: number;
+  balance: number;
+  balanceCurrency: string;
+  enabled: boolean;
 }
 
 export default function ApiSyncPanel() {
-  const { adminUser } = useAdminStore();
-  const [providers, setProviders] = useState<SyncProvider[]>([]);
+  const { showToast } = useAdminStore();
+  const [providers, setProviders] = useState<ProviderStats[]>([]);
   const [syncing, setSyncing] = useState<string | null>(null);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [lastSyncResult, setLastSyncResult] = useState<{ categories: number; products: number; games: number; errors: string[] } | null>(null);
 
-  useEffect(() => {
-    const providersRef = ref(database, 'apiProviders');
-    const unsub = onValue(providersRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: SyncProvider[] = Object.entries(data).map(([id, val]: [string, any]) => ({
-        id,
-        name: val.name || val.displayName || 'مزود غير معروف',
-        lastSync: val.lastSync || val.lastSyncAt || null,
-        status: val.syncStatus || (val.lastSync ? 'synced' : 'never'),
-        autoSync: val.autoSync ?? true,
-      }));
-      setProviders(list);
+  const loadProviders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const apiProviders = await getApiProviders();
+
+      // جلب إحصائيات المزودين من Supabase
+      const stats: ProviderStats[] = await Promise.all(
+        apiProviders.map(async (prov): Promise<ProviderStats> => {
+          const [{ count: catCount }, { count: gameCount }] = await Promise.all([
+            supabase.from('api_categories').select('id', { count: 'exact', head: true })
+              .eq('api_provider_id', prov.id).neq('category_type', 'game'),
+            supabase.from('api_games').select('id', { count: 'exact', head: true })
+              .eq('api_provider_id', prov.id),
+          ]);
+          const prodResult = await supabase.from('api_products').select('id', { count: 'exact', head: true })
+            .eq('api_provider_id', prov.id);
+          const prodCount = prodResult.count || 0;
+
+          return {
+            id: prov.id,
+            name: prov.name,
+            lastSync: prov.lastSync,
+            status: prov.lastSync ? 'synced' : 'never',
+            categories: catCount || 0,
+            games: gameCount || 0,
+            products: prodCount || 0,
+            balance: prov.balance || 0,
+            balanceCurrency: prov.balanceCurrency || 'USD',
+            enabled: prov.enabled,
+          };
+        })
+      );
+
+      setProviders(stats);
+    } catch (e: any) {
+      console.error('loadProviders', e);
+    } finally {
       setLoading(false);
-    });
-    return () => unsub();
+    }
   }, []);
 
-  const handleSync = async (providerId: string) => {
+  useEffect(() => { loadProviders(); }, [loadProviders]);
+
+  const handleSyncProvider = async (providerId: string) => {
     setSyncing(providerId);
+    setProviders(prev => prev.map(p => p.id === providerId ? { ...p, status: 'syncing' } : p));
     try {
-      const { set: firebaseSet } = await import('@/lib/db-compat');
-      await firebaseSet(ref(database, `apiProviders/${providerId}/syncStatus`), 'syncing');
-      await firebaseSet(ref(database, `apiProviders/${providerId}/lastSync`), new Date().toISOString());
-      // Simulate sync completion
-      setTimeout(async () => {
-        try {
-          await firebaseSet(ref(database, `apiProviders/${providerId}/syncStatus`), 'synced');
-        } catch {}
-        setSyncing(null);
-      }, 2000);
-    } catch (error) {
-      console.error('Sync error:', error);
+      const apiProv = (await getApiProviders()).find(p => p.id === providerId);
+      if (!apiProv) throw new Error('المزود غير موجود');
+
+      const result = await fullG2BulkSync(apiProv);
+
+      setProviders(prev => prev.map(p => p.id === providerId ? {
+        ...p,
+        status: 'synced',
+        categories: result.categories,
+        games: result.games,
+        products: result.products,
+        lastSync: new Date().toISOString(),
+      } : p));
+
+      showToast(`تمت مزامنة ${result.categories} تصنيف، ${result.products} منتج، ${result.games} لعبة`, 'success');
+    } catch (e: any) {
+      setProviders(prev => prev.map(p => p.id === providerId ? { ...p, status: 'error' } : p));
+      showToast(`فشلت المزامنة: ${e.message}`, 'error');
+    } finally {
       setSyncing(null);
     }
   };
 
   const handleSyncAll = async () => {
-    for (const provider of providers) {
-      await handleSync(provider.id);
+    setSyncingAll(true);
+    try {
+      const result = await syncAllProviders();
+      setLastSyncResult({
+        categories: result.totalCategories,
+        products: result.totalProducts,
+        games: result.totalGames,
+        errors: result.errors,
+      });
+      showToast(
+        `اكتملت المزامنة الشاملة: ${result.totalCategories} تصنيف، ${result.totalProducts} منتج، ${result.totalGames} لعبة`,
+        result.errors.length > 0 ? 'warning' : 'success'
+      );
+      await loadProviders();
+    } catch (e: any) {
+      showToast(`فشلت المزامنة الشاملة: ${e.message}`, 'error');
+    } finally {
+      setSyncingAll(false);
     }
   };
 
-  const statusIcon = (status: SyncProvider['status']) => {
+  const handleTestConnection = async (providerId: string) => {
+    const apiProv = (await getApiProviders()).find(p => p.id === providerId);
+    if (!apiProv) return;
+    const result = await testProviderConnection(apiProv);
+    if (result.success) {
+      showToast(`الاتصال ناجح - الرصيد: ${result.balance} USD`, 'success');
+      // تحديث الرصيد في الجدول
+      await supabase.from('api_providers').update({
+        balance: result.balance,
+        last_balance_check: new Date().toISOString(),
+      }).eq('id', providerId);
+      setProviders(prev => prev.map(p => p.id === providerId ? { ...p, balance: result.balance || 0 } : p));
+    } else {
+      showToast(`فشل الاتصال: ${result.error}`, 'error');
+    }
+  };
+
+  const statusIcon = (status: ProviderStats['status'], isCurrentlySyncing: boolean) => {
+    if (isCurrentlySyncing) return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
     switch (status) {
-      case 'synced': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case 'syncing': return <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />;
-      case 'error': return <XCircle className="w-4 h-4 text-red-500" />;
-      case 'never': return <Clock className="w-4 h-4 text-muted-foreground" />;
+      case 'synced':   return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+      case 'syncing':  return <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />;
+      case 'error':    return <XCircle className="w-4 h-4 text-red-500" />;
+      default:         return <Clock className="w-4 h-4 text-muted-foreground" />;
     }
   };
 
-  const statusLabel = (status: SyncProvider['status']) => {
-    switch (status) {
-      case 'synced': return 'متزامن';
-      case 'syncing': return 'جاري المزامنة';
-      case 'error': return 'خطأ';
-      case 'never': return 'لم يتم المزامنة';
-    }
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return 'لم تتم';
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'الآن';
+    if (diffMins < 60) return `منذ ${diffMins} دقيقة`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `منذ ${diffHours} ساعة`;
+    return d.toLocaleDateString('ar-YE');
   };
 
-  const syncedCount = providers.filter(p => p.status === 'synced').length;
-  const errorCount = providers.filter(p => p.status === 'error').length;
-
-  const stats = [
-    { label: 'إجمالي المزودين', value: providers.length, icon: Server, color: 'text-purple-500', bg: 'bg-purple-500/10' },
-    { label: 'متزامن', value: syncedCount, icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-500/10' },
-    { label: 'أخطاء', value: errorCount, icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-500/10' },
-    { label: 'مزامنة تلقائية', value: providers.filter(p => p.autoSync).length, icon: Zap, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-  ];
+  const totalStats = providers.reduce((acc, p) => ({
+    categories: acc.categories + p.categories,
+    games: acc.games + p.games,
+    products: acc.products + p.products,
+  }), { categories: 0, games: 0, products: 0 });
 
   return (
-    <div className="space-y-6 max-w-[1400px] mx-auto">
+    <div className="space-y-4 p-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="ios-large-title text-foreground">المزامنة</h1>
-          <p className="text-muted-foreground text-sm mt-1">إدارة مزامنة بيانات مزودي API</p>
+          <h2 className="text-base font-semibold">مزامنة مزودي API</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            مزامنة الفئات والمنتجات والألعاب من مزودي الخدمة الخارجيين
+          </p>
         </div>
-        <button
-          onClick={handleSyncAll}
-          disabled={syncing !== null || providers.length === 0}
-          className={cn(
-            'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all',
-            syncing !== null || providers.length === 0
-              ? 'bg-muted/30 text-muted-foreground cursor-not-allowed'
-              : 'bg-[#5C1A1B] text-white hover:bg-[#3D0F10] active:scale-[0.98] shadow-lg shadow-[#5C1A1B]/20'
-          )}
-        >
-          <RefreshCw className={cn('w-4 h-4', syncing && 'animate-spin')} />
-          مزامنة الكل
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={loadProviders}
+            disabled={loading}
+            className="p-2 rounded-lg hover:bg-muted/50 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={handleSyncAll}
+            disabled={syncingAll || loading}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-50"
+            style={{ backgroundColor: '#5C1A1B' }}
+          >
+            {syncingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            مزامنة الكل
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {stats.map((stat, i) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.05 }}
-          >
-            <div className="ios-card p-4">
-              <div className={cn('p-2 rounded-xl w-fit', stat.bg)}>
-                <stat.icon className={cn('w-4 h-4', stat.color)} />
-              </div>
-              <p className="text-xl font-bold text-foreground mt-2">{stat.value}</p>
-              <p className="text-[11px] text-muted-foreground">{stat.label}</p>
+      {/* Stats Summary */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { icon: Layers, label: 'التصنيفات', value: totalStats.categories, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+          { icon: Gamepad2, label: 'الألعاب', value: totalStats.games, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+          { icon: Package, label: 'المنتجات', value: totalStats.products, color: 'text-green-500', bg: 'bg-green-500/10' },
+        ].map(({ icon: Icon, label, value, color, bg }) => (
+          <div key={label} className="admin-card p-3 text-center rounded-xl">
+            <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center mx-auto mb-1.5`}>
+              <Icon className={`w-4 h-4 ${color}`} />
             </div>
-          </motion.div>
+            <p className="text-lg font-bold">{loading ? '...' : value.toLocaleString('ar')}</p>
+            <p className="text-[11px] text-muted-foreground">{label}</p>
+          </div>
         ))}
       </div>
 
-      {/* Provider Sync List */}
-      <div className="ios-card overflow-hidden">
-        <div className="p-4 pb-2">
-          <h3 className="text-sm font-semibold text-foreground">حالة المزامنة</h3>
-          <p className="text-[11px] text-muted-foreground mt-0.5">آخر تحديث لكل مزود</p>
-        </div>
-        <div>
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="w-6 h-6 text-muted-foreground animate-spin" />
+      {/* Last Sync Result */}
+      {lastSyncResult && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-3 rounded-xl bg-green-500/10 border border-green-500/20"
+        >
+          <div className="flex items-center gap-2 text-green-600 text-sm font-medium mb-1">
+            <CheckCircle2 className="w-4 h-4" />
+            آخر مزامنة شاملة
+          </div>
+          <div className="flex gap-4 text-xs text-muted-foreground">
+            <span>{lastSyncResult.categories} تصنيف</span>
+            <span>{lastSyncResult.products} منتج</span>
+            <span>{lastSyncResult.games} لعبة</span>
+          </div>
+          {lastSyncResult.errors.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {lastSyncResult.errors.map((err, i) => (
+                <p key={i} className="text-[11px] text-red-500 flex items-start gap-1">
+                  <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                  {err}
+                </p>
+              ))}
             </div>
-          ) : providers.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">لا يوجد مزودون مسجلون</p>
-          ) : (
-            providers.map((provider, i) => (
+          )}
+        </motion.div>
+      )}
+
+      {/* Providers List */}
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : providers.length === 0 ? (
+        <div className="text-center py-12">
+          <Database className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">لا يوجد مزودي API</p>
+          <p className="text-xs text-muted-foreground mt-1">أضف مزوداً من لوحة إدارة المزودين</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {providers.map((prov) => {
+            const isSyncing = syncing === prov.id;
+            return (
               <motion.div
-                key={provider.id}
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.03 }}
-                className="ios-list-item gap-3"
+                key={prov.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="admin-card p-4 rounded-xl"
               >
-                <div className="w-10 h-10 rounded-xl bg-[#5C1A1B]/10 flex items-center justify-center shrink-0">
-                  <Server className="w-5 h-5 text-[#5C1A1B]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{provider.name}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    {statusIcon(provider.status)}
-                    <span className="text-[11px] text-muted-foreground">{statusLabel(provider.status)}</span>
-                    {provider.lastSync && (
-                      <span className="text-[10px] text-muted-foreground/60 mr-1">
-                        {new Date(provider.lastSync).toLocaleDateString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
+                {/* Header */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#5C1A1B20' }}>
+                      <Server className="w-4 h-4" style={{ color: '#5C1A1B' }} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-sm">{prov.name}</p>
+                        {statusIcon(prov.status, isSyncing)}
+                        {!prov.enabled && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500">
+                            معطل
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        آخر مزامنة: {formatDate(prov.lastSync)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => handleTestConnection(prov.id)}
+                      disabled={isSyncing}
+                      className="p-2 rounded-lg hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
+                      title="اختبار الاتصال"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleSyncProvider(prov.id)}
+                      disabled={isSyncing || syncingAll}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-white transition-all hover:opacity-90 disabled:opacity-50"
+                      style={{ backgroundColor: '#5C1A1B' }}
+                    >
+                      {isSyncing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      مزامنة
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleSync(provider.id)}
-                  disabled={syncing === provider.id}
-                  className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
-                    syncing === provider.id
-                      ? 'bg-blue-500/10 text-blue-500 cursor-wait'
-                      : 'bg-[#5C1A1B]/5 text-[#5C1A1B] hover:bg-[#5C1A1B]/10 active:scale-[0.98]'
-                  )}
-                >
-                  <RefreshCw className={cn('w-3.5 h-3.5', syncing === provider.id && 'animate-spin')} />
-                  {syncing === provider.id ? 'جاري المزامنة...' : 'مزامنة'}
-                </button>
+
+                {/* Stats */}
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { icon: Layers, label: 'تصنيف', value: prov.categories, color: '#3B82F6' },
+                    { icon: Gamepad2, label: 'لعبة', value: prov.games, color: '#8B5CF6' },
+                    { icon: Package, label: 'منتج', value: prov.products, color: '#10B981' },
+                    { icon: Database, label: 'USD رصيد', value: `${prov.balance.toFixed(2)}`, color: '#F59E0B' },
+                  ].map(({ icon: Icon, label, value, color }) => (
+                    <div key={label} className="text-center p-2 rounded-lg bg-muted/30">
+                      <Icon className="w-3.5 h-3.5 mx-auto mb-1" style={{ color }} />
+                      <p className="text-sm font-semibold">{isSyncing ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : value}</p>
+                      <p className="text-[10px] text-muted-foreground">{label}</p>
+                    </div>
+                  ))}
+                </div>
               </motion.div>
-            ))
-          )}
+            );
+          })}
         </div>
-      </div>
+      )}
     </div>
   );
 }
