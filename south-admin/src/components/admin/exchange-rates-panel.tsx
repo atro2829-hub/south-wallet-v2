@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, set, push } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId, cn, formatDateAr } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,6 +15,10 @@ import { Separator } from '@/components/ui/separator';
 import { Save, Loader2, RefreshCw, History, DollarSign, TrendingUp, ArrowRightLeft, Clock } from 'lucide-react';
 import { motion } from 'framer-motion';
 
+// app_config key that stores the autoSync flag (the exchange_rates table
+// itself has no such column, so we keep it in a small JSON blob here).
+const EXTRAS_KEY = 'exchange_rates_extras';
+
 export default function ExchangeRatesPanel() {
   const { adminUser, showToast } = useAdminStore();
   const [rates, setRates] = useState({ USD_YER: 1558, USD_SAR: 3.75, SAR_YER: 415.47 });
@@ -24,56 +27,131 @@ export default function ExchangeRatesPanel() {
   const [autoSync, setAutoSync] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
 
-  useEffect(() => {
-    const ratesRef = ref(database, 'adminSettings/exchangeRates');
-    const unsub1 = onValue(ratesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
+  // Load the latest exchange_rates row + recent history (last 20 rows).
+  const loadRates = async () => {
+    try {
+      // Latest active row = current rates.
+      const { data: latest, error: latestErr } = await supabaseAdmin
+        .from('exchange_rates')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestErr) {
+        console.warn('[loadRates] latest error:', latestErr.message);
+      } else if (latest) {
         setRates({
-          USD_YER: data.USD_YER || 1558,
-          USD_SAR: data.USD_SAR || 3.75,
-          SAR_YER: data.SAR_YER || 415.47,
+          USD_YER: Number(latest.usd_to_yer ?? 1558),
+          USD_SAR: Number(latest.usd_to_sar ?? 3.75),
+          SAR_YER: Number(latest.sar_to_yer ?? 415.47),
         });
-        setAutoSync(data.autoSync || false);
       }
+      // History: last 20 rows.
+      const { data: histRows, error: histErr } = await supabaseAdmin
+        .from('exchange_rates')
+        .select('id, usd_to_yer, usd_to_sar, sar_to_yer, source, created_at, updated_by')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (histErr) {
+        console.warn('[loadRates] history error:', histErr.message);
+      } else {
+        const list = (histRows || []).map((r: any) => ({
+          id: r.id,
+          USD_YER: Number(r.usd_to_yer ?? 0),
+          USD_SAR: Number(r.usd_to_sar ?? 0),
+          SAR_YER: Number(r.sar_to_yer ?? 0),
+          timestamp: r.created_at,
+          adminName: r.source || 'النظام',
+        }));
+        setHistory(list);
+      }
+      // autoSync flag from app_config.
+      const { data: extrasRow } = await supabaseAdmin
+        .from('app_config')
+        .select('value')
+        .eq('key', EXTRAS_KEY)
+        .maybeSingle();
+      if (extrasRow?.value) {
+        const v = extrasRow.value as Record<string, any>;
+        setAutoSync(v.autoSync === true);
+      }
+    } catch (e) {
+      console.error('[loadRates] exception:', e);
+    } finally {
       setLoading(false);
-    });
+    }
+  };
 
-    const histRef = ref(database, 'adminSettings/exchangeRateHistory');
-    const unsub2 = onValue(histRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list = Object.entries(data).map(([key, val]: [string, any]) => ({ id: key, ...val }))
-        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        .slice(0, 20);
-      setHistory(list);
-    });
-
-    return () => { unsub1(); unsub2(); };
+  useEffect(() => {
+    loadRates();
+    // Subscribe to realtime changes on exchange_rates so the panel stays in sync.
+    const channel = supabaseAdmin
+      .channel(`exchange-rates-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exchange_rates' }, () => loadRates())
+      .subscribe();
+    return () => {
+      try { supabaseAdmin.removeChannel(channel); } catch {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Insert a new exchange_rates row representing the current rates.
+  // Each save creates a new row so we keep a full history.
+  const insertRatesRow = async (
+    ratesToSave: { USD_YER: number; USD_SAR: number; SAR_YER: number },
+    source: string,
+    updatedBy: string | null,
+  ) => {
+    const nowIso = new Date().toISOString();
+    const { error } = await supabaseAdmin.from('exchange_rates').insert({
+      usd_to_yer: ratesToSave.USD_YER,
+      usd_to_sar: ratesToSave.USD_SAR,
+      sar_to_yer: ratesToSave.SAR_YER,
+      source,
+      is_active: true,
+      updated_by: updatedBy,
+      created_at: nowIso,
+      updated_at: nowIso,
+    });
+    if (error) {
+      console.error('[insertRatesRow] error:', error);
+      throw error;
+    }
+  };
+
+  const persistAutoSync = async (value: boolean) => {
+    const nowIso = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from('app_config')
+      .upsert({
+        key: EXTRAS_KEY,
+        value: { autoSync: value, updatedAt: nowIso },
+        updated_at: nowIso,
+      }, { onConflict: 'key' });
+    if (error) console.warn('[persistAutoSync] error:', error.message);
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await set(ref(database, 'adminSettings/exchangeRates'), {
-        ...rates, autoSync, updatedAt: new Date().toISOString(), updatedBy: adminUser?.uid,
-      });
-
-      // Log to history
-      await push(ref(database, 'adminSettings/exchangeRateHistory'), {
-        USD_YER: rates.USD_YER, USD_SAR: rates.USD_SAR, SAR_YER: rates.SAR_YER,
-        timestamp: new Date().toISOString(), updatedBy: adminUser?.uid, adminName: adminUser?.displayName,
-      });
-
+      await insertRatesRow(rates, adminUser?.displayName || 'admin', adminUser?.uid || null);
       showToast('تم حفظ أسعار الصرف', 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) {
+      console.error('Save error:', e);
+      showToast('حدث خطأ: ' + (e?.message || ''), 'error');
+    }
     finally { setSaving(false); }
   };
 
   const handleAutoSync = async () => {
     try {
-      await set(ref(database, 'adminSettings/exchangeRates/autoSync'), !autoSync);
-      showToast(!autoSync ? 'تم تفعيل المزامنة التلقائية' : 'تم تعطيل المزامنة التلقائية', 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
+      const newVal = !autoSync;
+      setAutoSync(newVal);
+      await persistAutoSync(newVal);
+      showToast(newVal ? 'تم تفعيل المزامنة التلقائية' : 'تم تعطيل المزامنة التلقائية', 'success');
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e?.message || ''), 'error');
+    }
   };
 
   // Fetch live exchange rates from a free public API (open.er-api.com).
@@ -115,17 +193,7 @@ export default function ExchangeRatesPanel() {
           const sarYer = Math.round((usdYer / usdSar) * 100) / 100;
           const newRates = { USD_YER: usdYer, USD_SAR: usdSar, SAR_YER: sarYer };
           setRates(newRates);
-          await set(ref(database, 'adminSettings/exchangeRates'), {
-            ...newRates, autoSync: true,
-            updatedAt: new Date().toISOString(),
-            updatedBy: 'auto-sync',
-            source: 'open.er-api.com',
-          });
-          await push(ref(database, 'adminSettings/exchangeRateHistory'), {
-            ...newRates, timestamp: new Date().toISOString(),
-            updatedBy: 'auto-sync', adminName: 'النظام التلقائي',
-            source: 'open.er-api.com',
-          });
+          await insertRatesRow(newRates, 'open.er-api.com (auto-sync)', null);
         }
       } catch (e) {
         console.warn('Auto-sync exchange rates failed:', e);
@@ -134,6 +202,7 @@ export default function ExchangeRatesPanel() {
     fetchAndSave();
     const interval = setInterval(fetchAndSave, 30 * 60 * 1000); // 30 min
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSync]);
 
   // Calculated rates

@@ -8,7 +8,7 @@ import { useAppStore } from '@/lib/store';
 import { productIcons, getProductIcon } from '@/lib/product-icons';
 import { serviceIcons } from '@/lib/service-icons';
 import { supabase, supabaseService } from '@/lib/supabase';
-import type { DbSubSection, DbServiceProvider, DbProductPackage } from '@/lib/supabase';
+import type { DbSubSection, DbServiceProvider, DbProductPackage, DbWalletAddress } from '@/lib/supabase';
 import { getSubSections, type DynamicSubSection, type DynamicCategory } from '@/lib/categories';
 import type { ApiProviderCategory, ApiProviderProduct, ApiProviderConfig } from '@/lib/api-provider';
 import { getApiProvider } from '@/lib/api-providers';
@@ -182,7 +182,7 @@ export default function CategoryDetailScreen() {
     fbVisibility,
   } = useAppStore();
 
-  const [viewMode, setViewMode] = useState<'subsections' | 'products' | 'api-products' | 'wallet-packages'>('subsections');
+  const [viewMode, setViewMode] = useState<'subsections' | 'products' | 'api-products' | 'api-subsections' | 'wallet-packages' | 'usdt-section' | 'usdt-purchase'>('subsections');
   const [selectedSubSection, setSelectedSubSection] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -197,6 +197,31 @@ export default function CategoryDetailScreen() {
   // Wallet service state
   const [selectedWalletService, setSelectedWalletService] = useState<WalletServiceItem | null>(null);
   const [selectedWalletPackage, setSelectedWalletPackage] = useState<WalletServicePackage | null>(null);
+
+  // API sub-section hierarchical state (Level 1 → Level 2 → Level 3)
+  // When `sectionType === 'api-products'`, we first show sub_sections as a grid
+  // (Level 1). When a sub_section is tapped, we fetch its api_categories (Level 2
+  // filter tabs) and api_products (Level 3 grid) scoped by that sub_section via
+  // `api_categories.section_id`.
+  const [selectedApiSubSection, setSelectedApiSubSection] = useState<DynamicSubSection | null>(null);
+  const [apiSubSectionCategories, setApiSubSectionCategories] = useState<any[]>([]);
+  const [apiSubSectionProducts, setApiSubSectionProducts] = useState<any[]>([]);
+  const [apiSubSectionLoading, setApiSubSectionLoading] = useState(false);
+  const [apiSubCategoryFilter, setApiSubCategoryFilter] = useState<string | null>(null);
+
+  // USDT-specific state. The USDT section (`section_id === 'usdt'`) is a wallet
+  // section that needs special handling: sub_sections (buy-usdt / sell-usdt /
+  // usdt-plans) are shown as filter tabs, service_providers for the selected
+  // sub_section are shown as a grid, and the purchase dialog uses a custom
+  // quantity input + wallet address input (instead of fixed packages).
+  const [usdtSubSection, setUsdtSubSection] = useState<string>('buy-usdt');
+  const [usdtProviders, setUsdtProviders] = useState<DbServiceProvider[]>([]);
+  const [usdtProvidersLoading, setUsdtProvidersLoading] = useState(false);
+  const [selectedUsdtProvider, setSelectedUsdtProvider] = useState<DbServiceProvider | null>(null);
+  const [usdtPackages, setUsdtPackages] = useState<DbProductPackage[]>([]);
+  const [usdtQuantity, setUsdtQuantity] = useState('');
+  const [usdtWalletAddress, setUsdtWalletAddress] = useState('');
+  const [usdtWalletAddresses, setUsdtWalletAddresses] = useState<DbWalletAddress[]>([]);
 
   // API category filter for Supabase products view
   const [apiCategoryFilter, setApiCategoryFilter] = useState<string | null>(null);
@@ -480,6 +505,179 @@ export default function CategoryDetailScreen() {
     };
   }, [sectionType, sectionApiProviderId]);
 
+  // ─── Fetch api_categories + api_products scoped by selected sub_section ──
+  // Level 2 + Level 3 of the hierarchical display for `api-products` sections.
+  // When a sub_section is tapped we fetch the api_categories whose `section_id`
+  // matches the sub_section id, then fetch api_products whose `api_category_id`
+  // is in that set. If the sub_section has no api_categories linked (e.g.
+  // `digital-streaming`), we fall back to showing nothing — the user can pick
+  // another sub_section.
+  useEffect(() => {
+    if (sectionType !== 'api-products' || !selectedApiSubSection || !sectionApiProviderId) {
+      setApiSubSectionCategories([]);
+      setApiSubSectionProducts([]);
+      return;
+    }
+    let cancelled = false;
+    setApiSubSectionLoading(true);
+    setApiSubCategoryFilter(null);
+
+    const fetchScoped = async () => {
+      try {
+        // 1. Fetch api_categories linked to this sub_section (section_id).
+        const { data: catData, error: catError } = await supabase
+          .from('api_categories')
+          .select('*')
+          .eq('api_provider_id', sectionApiProviderId)
+          .eq('section_id', selectedApiSubSection.id)
+          .eq('is_active', true);
+
+        if (cancelled) return;
+        if (catError) throw catError;
+        const cats = catData || [];
+        setApiSubSectionCategories(cats);
+
+        // 2. Fetch api_products for those categories. We also join
+        //    product_packages to surface the markup-included price.
+        const catIds = cats.map((c: any) => String(c.api_category_id));
+        if (catIds.length === 0) {
+          setApiSubSectionProducts([]);
+          return;
+        }
+
+        // Build an `in.(...)` filter string (URL-encoded by supabase-js).
+        const { data: prodData, error: prodError } = await supabase
+          .from('api_products')
+          .select(`
+            *,
+            package:package_id (
+              id,
+              price_usd,
+              cost_price,
+              commission_amount,
+              is_active
+            )
+          `)
+          .eq('api_provider_id', sectionApiProviderId)
+          .eq('is_active', true)
+          .in('api_category_id', catIds);
+
+        if (cancelled) return;
+        if (prodError) throw prodError;
+        const enriched = (prodData || []).map((p: any) => ({
+          ...p,
+          final_price_usd: p.package?.price_usd || p.price || 0,
+          cost_price: p.package?.cost_price || p.price || 0,
+          commission_amount: p.package?.commission_amount || 0,
+          stock: p.product_data?.stock || 0,
+        }));
+        setApiSubSectionProducts(enriched);
+      } catch (error) {
+        console.error('Error fetching scoped api_categories/products:', error);
+        if (!cancelled) {
+          setApiSubSectionCategories([]);
+          setApiSubSectionProducts([]);
+        }
+      } finally {
+        if (!cancelled) setApiSubSectionLoading(false);
+      }
+    };
+
+    fetchScoped();
+
+    return () => { cancelled = true; };
+  }, [sectionType, selectedApiSubSection, sectionApiProviderId]);
+
+  // ─── Fetch USDT service_providers + packages for the selected sub_section ──
+  // The USDT section uses the wallet_addresses table for deposit addresses and
+  // service_providers/product_packages for buy/sell/plans. We fetch both up
+  // front whenever the user enters the USDT section.
+  useEffect(() => {
+    if (sectionType !== 'usdt' || selectedCategory !== 'usdt') {
+      setUsdtProviders([]);
+      setUsdtPackages([]);
+      setUsdtWalletAddresses([]);
+      return;
+    }
+    let cancelled = false;
+    setUsdtProvidersLoading(true);
+
+    const fetchUsdt = async () => {
+      try {
+        // service_providers for the section (will be filtered by sub_section
+        // in the UI render).
+        const { data: provData, error: provError } = await supabase
+          .from('service_providers')
+          .select('*')
+          .eq('section_id', 'usdt')
+          .eq('is_active', true)
+          .order('sort_order');
+        if (cancelled) return;
+        if (provError) throw provError;
+        const provs = (provData || []) as DbServiceProvider[];
+        setUsdtProviders(provs);
+
+        // product_packages for all USDT providers (single round-trip).
+        const provIds = provs.map(p => p.id);
+        if (provIds.length === 0) {
+          setUsdtPackages([]);
+        } else {
+          const { data: pkgData, error: pkgError } = await supabase
+            .from('product_packages')
+            .select('*')
+            .in('provider_id', provIds)
+            .eq('is_active', true)
+            .order('sort_order');
+          if (cancelled) return;
+          if (pkgError) throw pkgError;
+          setUsdtPackages((pkgData || []) as DbProductPackage[]);
+        }
+
+        // USDT wallet addresses (used to show the user where to deposit when
+        // buying USDT).
+        const { data: waData, error: waError } = await supabase
+          .from('wallet_addresses')
+          .select('*')
+          .eq('currency', 'USDT')
+          .eq('is_active', true);
+        if (cancelled) return;
+        if (waError) throw waError;
+        setUsdtWalletAddresses((waData || []) as DbWalletAddress[]);
+      } catch (error) {
+        console.error('Error fetching USDT providers/packages:', error);
+        if (!cancelled) {
+          setUsdtProviders([]);
+          setUsdtPackages([]);
+          setUsdtWalletAddresses([]);
+        }
+      } finally {
+        if (!cancelled) setUsdtProvidersLoading(false);
+      }
+    };
+
+    fetchUsdt();
+
+    // Realtime: keep the providers/packages list in sync if admin edits them.
+    const channel = supabase
+      .channel(`usdt-providers-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_providers', filter: 'section_id=eq.usdt' }, () => {
+        fetchUsdt();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_packages' }, () => {
+        fetchUsdt();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_addresses', filter: 'currency=eq.USDT' }, () => {
+        fetchUsdt();
+      })
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      try { supabase.removeChannel(channel); } catch {}
+    };
+  }, [sectionType, selectedCategory]);
+
+
   // ─── Load API category data when it's an API category ─────────────
   useEffect(() => {
     if (isApiCategory && apiCategoryInfo && apiProviders.length > 0) {
@@ -591,7 +789,13 @@ export default function CategoryDetailScreen() {
   useEffect(() => {
     if (isApiCategory) {
       setViewMode('api-products');
-    } else if (sectionType === 'api' || sectionType === 'api-products') {
+    } else if (sectionType === 'api-products') {
+      // Hierarchical display: show sub_sections grid first (Level 1).
+      // Tapping a sub_section switches to 'api-products' view (Level 2 + 3).
+      setViewMode('api-subsections');
+      setSelectedApiSubSection(null);
+      setApiSubCategoryFilter(null);
+    } else if (sectionType === 'api') {
       setViewMode('api-products');
     } else if (sectionType === 'api-games') {
       // Navigate to games screen
@@ -599,6 +803,14 @@ export default function CategoryDetailScreen() {
       return;
     } else if (sectionType === 'telecom') {
       setViewMode('products');
+    } else if (sectionType === 'usdt' && selectedCategory === 'usdt') {
+      // USDT section: show sub_sections as tabs + provider grid in a single
+      // view ('usdt-section'). The purchase dialog is 'usdt-purchase'.
+      setViewMode('usdt-section');
+      setUsdtSubSection('buy-usdt');
+      setSelectedUsdtProvider(null);
+      setUsdtQuantity('');
+      setUsdtWalletAddress('');
     } else if (sectionType === 'wallet-services') {
       setViewMode('products');
     } else {
@@ -831,6 +1043,14 @@ export default function CategoryDetailScreen() {
       setCustomerInput('');
       return;
     }
+    // USDT purchase dialog → back to USDT providers list
+    if (sectionType === 'usdt' && viewMode === 'usdt-purchase') {
+      setViewMode('usdt-section');
+      setSelectedUsdtProvider(null);
+      setUsdtQuantity('');
+      setUsdtWalletAddress('');
+      return;
+    }
     if (selectedWalletPackage) {
       setSelectedWalletPackage(null);
       setCustomerInput('');
@@ -839,6 +1059,15 @@ export default function CategoryDetailScreen() {
     if (selectedWalletService && viewMode === 'wallet-packages') {
       setSelectedWalletService(null);
       setViewMode('products');
+      return;
+    }
+    // api-products: from products view → back to sub_sections grid (Level 1)
+    if (!isApiCategory && sectionType === 'api-products' && viewMode === 'api-products' && selectedApiSubSection) {
+      setViewMode('api-subsections');
+      setSelectedApiSubSection(null);
+      setApiSubCategoryFilter(null);
+      setSearchQuery('');
+      if (contentRef.current) contentRef.current.scrollTop = 0;
       return;
     }
     if (!isApiCategory && sectionType === 'regular' && viewMode === 'products' && hasSubSections) {
@@ -858,6 +1087,127 @@ export default function CategoryDetailScreen() {
     setViewMode('products');
     setSearchQuery('');
     if (contentRef.current) contentRef.current.scrollTop = 0;
+  };
+
+  // Tapping a sub_section in api-products mode (Level 1) → switch to the
+  // scoped api-products view (Level 2 + 3).
+  const handleApiSubSectionClick = (sub: DynamicSubSection) => {
+    setSelectedApiSubSection(sub);
+    setApiSubCategoryFilter(null);
+    setViewMode('api-products');
+    setSearchQuery('');
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  };
+
+  // Tapping a USDT service_provider → open the custom purchase dialog
+  const handleUsdtProviderClick = (provider: DbServiceProvider) => {
+    setSelectedUsdtProvider(provider);
+    setUsdtQuantity('');
+    setUsdtWalletAddress('');
+    setViewMode('usdt-purchase');
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  };
+
+  // Handle USDT purchase — uses a custom quantity input + wallet address
+  // instead of fixed packages. The price is computed dynamically from the
+  // provider's smallest package unit price (or 1 USDT = unit price).
+  const handleUsdtPurchase = async () => {
+    if (!selectedUsdtProvider) return;
+    const qty = parseFloat(usdtQuantity);
+    if (!qty || qty <= 0) return;
+    if (!usdtWalletAddress.trim()) return;
+
+    setIsPurchasing(true);
+    try {
+      const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const user = useAppStore.getState().user;
+
+      // Price computation: USDT packages store `price_usd` for a given USDT
+      // amount (e.g. USDT 10 → $11.60, USDT 100 → $116.00). The implied
+      // per-USDT rate is therefore price_usd / usdt_amount. We extract the
+      // amount from the package name ("USDT 10" → 10) and use the cheapest
+      // package's implied rate as the unit price for the custom quantity.
+      const providerPkgs = usdtPackages.filter(p => p.provider_id === selectedUsdtProvider.id);
+      let unitPrice = 1.16; // fallback: cost + 16%
+      let costUnit = 1;
+      if (providerPkgs.length > 0) {
+        const withRates = providerPkgs.map(p => {
+          const amt = parseFloat(p.name.replace(/[^0-9.]/g, '')) || 0;
+          const rate = amt > 0 ? Number(p.price_usd) / amt : 0;
+          return { amt, rate, cost: Number(p.cost_price), costRate: amt > 0 ? Number(p.cost_price) / amt : 0 };
+        }).filter(r => r.rate > 0);
+        if (withRates.length > 0) {
+          // Pick the rate that matches the requested quantity tier, otherwise
+          // use the smallest package's rate (conservative).
+          withRates.sort((a, b) => a.amt - b.amt);
+          const matched = withRates.find(r => r.amt >= qty) || withRates[0];
+          unitPrice = matched.rate;
+          costUnit = matched.costRate || costUnit;
+        }
+      }
+
+      const markedUpPrice = Number((qty * unitPrice).toFixed(2));
+      const costPrice = Number((qty * costUnit).toFixed(2));
+      const commissionAmount = Number((markedUpPrice - costPrice).toFixed(2));
+
+      const isBuy = selectedUsdtProvider.sub_section_id === 'buy-usdt';
+      const isSell = selectedUsdtProvider.sub_section_id === 'sell-usdt';
+      const packageName = `${qty} USDT`;
+
+      const orderData = {
+        user_id: user?.userId || '',
+        provider_id: selectedUsdtProvider.id,
+        provider_name: selectedUsdtProvider.name,
+        package_id: `usdt-custom-${qty}`,
+        package_name: packageName,
+        category_id: 'usdt',
+        category_name: 'USDT',
+        customer_input: usdtWalletAddress.trim(),
+        amount: markedUpPrice,
+        currency: 'USD' as const,
+        cost_price: costPrice,
+        cost_currency: 'USD',
+        commission_amount: commissionAmount,
+        commission_type: 'percentage',
+        execution_type: 'manual' as const,
+        status: 'pending' as const,
+        api_provider_id: '',
+        api_product_id: '',
+        api_order_id: '',
+        api_response: { quantity: qty, wallet_address: usdtWalletAddress.trim(), type: isBuy ? 'buy' : isSell ? 'sell' : 'plan' },
+        result_code: '',
+        result_message: '',
+        result_pin_code: '',
+      };
+
+      await supabaseService.createOrder(orderData);
+
+      useAppStore.getState().addOrder({
+        id: orderId,
+        userId: user?.id || '',
+        userName: user?.name || '',
+        userPhone: user?.phone || '',
+        providerId: selectedUsdtProvider.id,
+        providerName: selectedUsdtProvider.name,
+        packageId: `usdt-custom-${qty}`,
+        packageName,
+        customerInput: usdtWalletAddress.trim(),
+        amount: markedUpPrice,
+        currency: 'USD',
+        status: 'pending',
+        executionType: 'manual',
+        createdAt: new Date().toISOString(),
+      });
+
+      setViewMode('usdt-section');
+      setSelectedUsdtProvider(null);
+      setUsdtQuantity('');
+      setUsdtWalletAddress('');
+    } catch (error) {
+      console.error('USDT purchase error:', error);
+    } finally {
+      setIsPurchasing(false);
+    }
   };
 
   const handleApiCategoryClick = (providerId: string, categoryId: string) => {
@@ -1102,6 +1452,161 @@ export default function CategoryDetailScreen() {
                 </button>
               </div>
             </motion.div>
+          ) : selectedUsdtProvider && viewMode === 'usdt-purchase' ? (
+            /* USDT Purchase Dialog — custom quantity + wallet address */
+            <motion.div
+              key={`usdt-purchase-${selectedUsdtProvider.id}`}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="px-4 pt-4"
+            >
+              <div className="rounded-2xl p-4" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+                {/* Provider Info */}
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                    {selectedUsdtProvider.image_url ? (
+                      <img src={selectedUsdtProvider.image_url} alt="" className="w-10 h-10 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    ) : (
+                      <Wallet size={24} color={isDark ? '#888' : '#666'} />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-sm font-bold" style={{ color: textColor }}>{selectedUsdtProvider.name}</h3>
+                    {selectedUsdtProvider.description && (
+                      <p className="text-[10px] mt-0.5" style={{ color: subtleTextColor }}>
+                        {selectedUsdtProvider.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Live price preview */}
+                {(() => {
+                  const qty = parseFloat(usdtQuantity) || 0;
+                  const providerPkgs = usdtPackages.filter(p => p.provider_id === selectedUsdtProvider.id);
+                  let unitPrice = 1.16;
+                  if (providerPkgs.length > 0) {
+                    const withRates = providerPkgs.map(p => {
+                      const amt = parseFloat(p.name.replace(/[^0-9.]/g, '')) || 0;
+                      return { amt, rate: amt > 0 ? Number(p.price_usd) / amt : 0 };
+                    }).filter(r => r.rate > 0).sort((a, b) => a.amt - b.amt);
+                    if (withRates.length > 0) {
+                      const matched = withRates.find(r => r.amt >= qty) || withRates[0];
+                      unitPrice = matched.rate;
+                    }
+                  }
+                  const total = qty > 0 ? (qty * unitPrice).toFixed(2) : '0.00';
+                  return (
+                    <div className="mb-4 rounded-xl p-3" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+                      <div className="flex items-center justify-between text-xs">
+                        <span style={{ color: secondaryTextColor }}>السعر الإجمالي</span>
+                        <span className="font-bold" style={{ color: '#5C1A1B' }}>${total}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] mt-1">
+                        <span style={{ color: subtleTextColor }}>سعر الوحدة</span>
+                        <span style={{ color: subtleTextColor }}>${unitPrice.toFixed(4)} / USDT</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Quantity input */}
+                <div className="mb-4">
+                  <label className="text-xs font-medium block mb-1.5" style={{ color: secondaryTextColor }}>
+                    الكمية (USDT)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={usdtQuantity}
+                    onChange={(e) => setUsdtQuantity(e.target.value)}
+                    placeholder="أدخل كمية USDT"
+                    className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                    dir="ltr"
+                    min="0"
+                    step="any"
+                    style={{
+                      background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                      border: `1px solid ${borderColor}`,
+                      color: textColor,
+                    }}
+                  />
+                </div>
+
+                {/* Wallet address input */}
+                <div className="mb-4">
+                  <label className="text-xs font-medium block mb-1.5" style={{ color: secondaryTextColor }}>
+                    {selectedUsdtProvider.input_label || 'عنوان محفظة USDT'}
+                  </label>
+                  <input
+                    type="text"
+                    value={usdtWalletAddress}
+                    onChange={(e) => setUsdtWalletAddress(e.target.value)}
+                    placeholder={selectedUsdtProvider.input_label || 'أدخل عنوان محفظة USDT'}
+                    className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                    dir="ltr"
+                    style={{
+                      background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                      border: `1px solid ${borderColor}`,
+                      color: textColor,
+                    }}
+                  />
+                </div>
+
+                {/* Show a deposit wallet address if buying (admin's USDT wallet) */}
+                {selectedUsdtProvider.sub_section_id === 'buy-usdt' && usdtWalletAddresses.length > 0 && (
+                  <div className="mb-4 rounded-xl p-3" style={{ background: isDark ? 'rgba(38,161,123,0.08)' : 'rgba(38,161,123,0.05)', border: `1px solid rgba(38,161,123,0.2)` }}>
+                    <p className="text-[11px] font-bold mb-2" style={{ color: '#26A17B' }}>
+                      عنوان الإيداع (لتحويل المبلغ):
+                    </p>
+                    {usdtWalletAddresses.map((wa) => (
+                      <div key={wa.id} className="mb-2 last:mb-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] font-bold" style={{ color: secondaryTextColor }}>
+                            {wa.network_name || wa.network}
+                          </span>
+                          <button
+                            onClick={() => {
+                              try { navigator.clipboard.writeText(wa.address); } catch {}
+                            }}
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                            style={{ background: 'rgba(38,161,123,0.15)', color: '#26A17B' }}
+                          >
+                            نسخ
+                          </button>
+                        </div>
+                        <p className="text-[11px] font-mono break-all" dir="ltr" style={{ color: textColor }}>
+                          {wa.address}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleUsdtPurchase}
+                  disabled={!usdtQuantity.trim() || !usdtWalletAddress.trim() || parseFloat(usdtQuantity) <= 0 || isPurchasing}
+                  className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+                  style={{
+                    background: (!usdtQuantity.trim() || !usdtWalletAddress.trim() || parseFloat(usdtQuantity) <= 0 || isPurchasing) ? '#666' : '#5C1A1B',
+                    boxShadow: (!usdtQuantity.trim() || !usdtWalletAddress.trim() || parseFloat(usdtQuantity) <= 0 || isPurchasing) ? 'none' : '0 4px 12px rgba(92,26,27,0.3)',
+                  }}
+                >
+                  {isPurchasing ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      جاري المعالجة...
+                    </span>
+                  ) : (
+                    <span className="flex items-center justify-center gap-2">
+                      <ShoppingCart size={16} />
+                      تأكيد الشراء
+                    </span>
+                  )}
+                </button>
+              </div>
+            </motion.div>
           ) : isApiCategory && viewMode === 'api-products' && apiCategoryData ? (
             /* API Products View */
             <motion.div
@@ -1176,8 +1681,279 @@ export default function CategoryDetailScreen() {
                 </div>
               )}
             </motion.div>
+          ) : !isApiCategory && sectionType === 'api-products' && viewMode === 'api-subsections' ? (
+            /* Level 1: Sub-sections Grid for api-products sections (digital) */
+            <motion.div
+              key="api-subsections"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05, duration: 0.35 }}
+              className="px-4 pt-4"
+            >
+              <div className="mb-4">
+                <p className="text-sm" style={{ color: secondaryTextColor }}>
+                  اختر القسم الفرعي لعرض المنتجات المتاحة
+                </p>
+              </div>
+
+              {subSections.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {subSections.map((sub, index) => (
+                    <motion.button
+                      key={sub.id}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: Math.min(0.03 * index, 0.4), duration: 0.25 }}
+                      onClick={() => handleApiSubSectionClick(sub)}
+                      whileTap={{ scale: 0.93 }}
+                      className="flex flex-col items-center justify-center gap-2 py-4 px-2 rounded-xl transition-colors text-right"
+                      style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+                    >
+                      <div className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                        {sub.image ? (
+                          <img src={sub.image} alt={sub.name} className="w-12 h-12 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        ) : sub.iconType === 'image' && sub.icon ? (
+                          <img src={sub.icon} alt={sub.name} className="w-12 h-12 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        ) : sub.iconType === 'emoji' && sub.icon ? (
+                          <span className="text-3xl">{sub.icon}</span>
+                        ) : (
+                          <Package size={22} color={isDark ? '#888' : '#666'} />
+                        )}
+                      </div>
+                      <span className="text-[11px] font-semibold text-center leading-tight max-w-[90px]" style={{ color: textColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {sub.nameAr || sub.name}
+                      </span>
+                    </motion.button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+                    <Package size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+                  </div>
+                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد أقسام فرعية</p>
+                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>لم تتم إضافة أقسام فرعية لهذا القسم بعد</p>
+                </div>
+              )}
+            </motion.div>
+          ) : !isApiCategory && sectionType === 'api-products' && viewMode === 'api-products' && selectedApiSubSection ? (
+            /* Level 2 + 3: Scoped api_categories filter tabs + api_products grid */
+            <motion.div
+              key={`api-products-${selectedApiSubSection.id}`}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.25 }}
+              className="px-4 pt-4"
+            >
+              {/* Sub-section header */}
+              <div className="flex items-center gap-2 mb-3">
+                {selectedApiSubSection.image && (
+                  <img src={selectedApiSubSection.image} alt="" className="w-5 h-5 rounded object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                )}
+                <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B' }}>
+                  {selectedApiSubSection.nameAr || selectedApiSubSection.name}
+                </span>
+              </div>
+
+              {apiSubSectionLoading ? (
+                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+                  <span className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm mt-3" style={{ color: subtleTextColor }}>جاري تحميل المنتجات...</p>
+                </div>
+              ) : apiSubSectionProducts.length > 0 ? (
+                <>
+                  {/* Level 2: Category filter tabs */}
+                  {apiSubSectionCategories.length > 1 && (
+                    <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+                      <button
+                        onClick={() => setApiSubCategoryFilter(null)}
+                        className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95"
+                        style={{
+                          background: !apiSubCategoryFilter ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                          color: !apiSubCategoryFilter ? '#FFFFFF' : secondaryTextColor,
+                        }}
+                      >
+                        الكل
+                      </button>
+                      {apiSubSectionCategories.map((cat) => (
+                        <button
+                          key={cat.api_category_id || cat.id}
+                          onClick={() => setApiSubCategoryFilter(cat.api_category_id)}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95"
+                          style={{
+                            background: apiSubCategoryFilter === cat.api_category_id ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                            color: apiSubCategoryFilter === cat.api_category_id ? '#FFFFFF' : secondaryTextColor,
+                          }}
+                        >
+                          {cat.image_url && (
+                            <img src={cat.image_url} alt="" className="w-4 h-4 rounded-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                          )}
+                          {cat.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Level 3: Products grid */}
+                  <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(apiSubCategoryFilter
+                        ? apiSubSectionProducts.filter(p => String(p.api_category_id) === String(apiSubCategoryFilter))
+                        : apiSubSectionProducts
+                      ).map((product, pIndex) => {
+                        const rawPrice = Number(product.price) || Number(product.unit_price) || 0;
+                        const finalPrice = Number(product.final_price_usd) || rawPrice;
+                        return (
+                          <motion.button
+                            key={product.id || product.api_product_id}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: Math.min(0.03 * pIndex, 0.4), duration: 0.25 }}
+                            onClick={() => {
+                              setSelectedApiProduct({
+                                id: product.api_product_id || product.id,
+                                title: product.name || product.title || '',
+                                unit_price: finalPrice,
+                                stock: product.stock || 0,
+                                icon: product.image_url || '',
+                                image_url: product.image_url || '',
+                                description: product.description || '',
+                                category_id: product.api_category_id,
+                                isActive: true,
+                              });
+                              setCustomerInput('');
+                            }}
+                            whileTap={{ scale: 0.93 }}
+                            className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-xl transition-colors text-right"
+                            style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+                          >
+                            <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                              {product.image_url ? (
+                                <img src={product.image_url} alt="" className="w-11 h-11 object-contain" onError={(e) => { const t = e.target as HTMLImageElement; t.style.display = 'none'; }} />
+                              ) : (
+                                <Package size={22} color={isDark ? '#888' : '#666'} />
+                              )}
+                            </div>
+                            <span className="text-[11px] font-semibold text-center leading-tight max-w-[130px]" style={{ color: textColor }}>
+                              {product.name || product.title}
+                            </span>
+                            <span className="text-[11px] font-bold" style={{ color: '#5C1A1B' }}>
+                              {formatPrice(finalPrice)} $
+                            </span>
+                            {product.stock > 0 && (
+                              <span className="text-[8px]" style={{ color: subtleTextColor }}>
+                                متوفر: {product.stock}
+                              </span>
+                            )}
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+                    <Package size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+                  </div>
+                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد منتجات</p>
+                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>لم يتم ربط منتجات بهذا القسم الفرعي بعد</p>
+                </div>
+              )}
+            </motion.div>
+          ) : !isApiCategory && sectionType === 'usdt' && viewMode === 'usdt-section' ? (
+            /* USDT Section: sub_section tabs + providers grid */
+            <motion.div
+              key="usdt-section"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05, duration: 0.35 }}
+            >
+              {/* Sub-section tabs (buy-usdt / sell-usdt / usdt-plans) */}
+              <div className="px-4 pt-3 pb-2">
+                <div className="flex gap-2 overflow-x-auto scrollbar-hide" style={{ WebkitOverflowScrolling: 'touch' }}>
+                  {subSections.map((sub) => (
+                    <button
+                      key={sub.id}
+                      onClick={() => { setUsdtSubSection(sub.id); if (contentRef.current) contentRef.current.scrollTop = 0; }}
+                      className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95"
+                      style={{
+                        background: usdtSubSection === sub.id ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        color: usdtSubSection === sub.id ? '#FFFFFF' : secondaryTextColor,
+                        boxShadow: usdtSubSection === sub.id ? '0 2px 8px rgba(92,26,27,0.3)' : 'none',
+                      }}
+                    >
+                      {sub.image && (
+                        <img src={sub.image} alt="" className="w-4 h-4 rounded-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      )}
+                      {sub.nameAr || sub.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="px-4 mt-2">
+                {usdtProvidersLoading ? (
+                  <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+                    <span className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm mt-3" style={{ color: subtleTextColor }}>جاري تحميل الخدمات...</p>
+                  </div>
+                ) : (() => {
+                  const providers = usdtProviders.filter(p => p.sub_section_id === usdtSubSection);
+                  return providers.length > 0 ? (
+                    <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+                      <div className="grid grid-cols-3 gap-2">
+                        {providers.map((provider, pIndex) => {
+                          const providerPkgs = usdtPackages.filter(p => p.provider_id === provider.id);
+                          const startingPrice = providerPkgs.length > 0
+                            ? Math.min(...providerPkgs.map(p => Number(p.price_usd) || Infinity))
+                            : 0;
+                          return (
+                            <motion.button
+                              key={provider.id}
+                              initial={{ opacity: 0, scale: 0.9 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              transition={{ delay: Math.min(0.03 * pIndex, 0.4), duration: 0.25 }}
+                              onClick={() => handleUsdtProviderClick(provider)}
+                              whileTap={{ scale: 0.93 }}
+                              className="flex flex-col items-center justify-center gap-2 py-4 px-2 rounded-xl transition-colors"
+                              style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+                            >
+                              <div className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                                {provider.image_url ? (
+                                  <img src={provider.image_url} alt={provider.name} className="w-12 h-12 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                ) : (
+                                  <Wallet size={22} color={isDark ? '#888' : '#666'} />
+                                )}
+                              </div>
+                              <span className="text-[11px] font-semibold text-center leading-tight max-w-[90px]" style={{ color: textColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                {provider.name}
+                              </span>
+                              {startingPrice > 0 && startingPrice !== Infinity && (
+                                <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+                                  من {formatPrice(startingPrice)} $
+                                </span>
+                              )}
+                            </motion.button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+                      <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+                        <Wallet size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+                      </div>
+                      <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد خدمات</p>
+                      <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>لم تتم إضافة خدمات لهذا القسم بعد</p>
+                    </div>
+                  );
+                })()}
+              </div>
+            </motion.div>
           ) : !isApiCategory && sectionType === 'api-products' ? (
-            /* API Products from Supabase api_products table */
+            /* API Products from Supabase api_products table (fallback flat list) */
             <motion.div
               key="supabase-api-products"
               initial={{ opacity: 0, y: 12 }}

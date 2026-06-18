@@ -86,6 +86,7 @@ const navItems: NavItem[] = [
   { id: 'api-providers', label: 'مزودو API', icon: Globe, roles: ['admin', 'owner'] },
   { id: 'api-sync', label: 'مزامنة المنتجات', icon: RefreshCw, roles: ['admin', 'owner'] },
   { id: 'price-customization', label: 'تخصيص الأسعار', icon: DollarSign, roles: ['admin', 'owner'] },
+  { id: 'usdt', label: 'إدارة USDT', icon: DollarSign, roles: ['admin', 'owner'] },
   // Owner-only sections
   { id: 'card-colors', label: 'ألوان البطائق', icon: Palette, roles: ['owner'] },
   { id: 'g2bulk', label: 'G2Bulk', icon: Globe, roles: ['owner'] },

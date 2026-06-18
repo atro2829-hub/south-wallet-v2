@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { ref, update, push } from '@/lib/db-compat';
 import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, generateId, cn } from '@/lib/utils';
+import { supabaseAdmin } from '@/lib/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, XCircle, UserCheck, ZoomIn, X, CreditCard, FileText, Camera, Image as ImageIcon, Shield, Clock, CheckCircle, Users } from 'lucide-react';
+import { Search, XCircle, UserCheck, ZoomIn, X, CreditCard, FileText, Camera, Shield, Clock, CheckCircle, Users, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { notifyKycStatus } from '@/lib/notifications';
 import { AdminHelpBox } from '@/components/admin/admin-help-box';
@@ -27,6 +28,56 @@ export default function KYCPanel() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [kycDocs, setKycDocs] = useState<any[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+
+  // Fetch KYC documents from Supabase (kyc_documents table) whenever a user is
+  // selected in the detail dialog. The previous implementation tried to read
+  // camelCase Firebase-style fields (kycIdPhoto, kycSelfie, kycIdBackPhoto)
+  // directly off the user row, which never existed in Supabase. The actual
+  // images live in a separate `kyc_documents` table keyed by `user_id`.
+  const fetchKycDocs = useCallback(async (userId: string) => {
+    setLoadingDocs(true);
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('kyc_documents')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+      if (error) {
+        console.error('[KYCPanel] fetch kyc_documents error:', error);
+        setKycDocs([]);
+      } else {
+        setKycDocs(data || []);
+      }
+    } finally {
+      setLoadingDocs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!detailOpen || !selected) return;
+    const userId = selected.id || selected.uid;
+    if (!userId) return;
+    // Fetching data on demand is exactly what effects are for. The lint rule
+    // react-hooks/set-state-in-effect is overly conservative here because
+    // fetchKycDocs calls setState inside an async callback (after `await`),
+    // which is the recommended pattern per React docs:
+    // https://react.dev/reference/react/useEffect#fetching-data-with-effects
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchKycDocs(userId);
+  }, [detailOpen, selected, fetchKycDocs]);
+
+  // Clear cached documents when the detail dialog closes so stale images
+  // from the previously-selected user don't leak into the next open.
+  const handleDialogChange = (open: boolean) => {
+    setDetailOpen(open);
+    if (!open) {
+      setKycDocs([]);
+      setLoadingDocs(false);
+      setReason('');
+    }
+  };
 
   const filtered = useMemo(() => {
     return kycPendingUsers.filter((u: any) => {
@@ -61,7 +112,7 @@ export default function KYCPanel() {
         adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
       });
       showToast('تم توثيق الحساب', 'success');
-      setDetailOpen(false);
+      handleDialogChange(false);
     } catch { showToast('حدث خطأ', 'error'); }
   };
 
@@ -83,8 +134,7 @@ export default function KYCPanel() {
         adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
       });
       showToast('تم رفض التوثيق', 'success');
-      setDetailOpen(false);
-      setReason('');
+      handleDialogChange(false);
     } catch { showToast('حدث خطأ', 'error'); }
   };
 
@@ -94,11 +144,6 @@ export default function KYCPanel() {
     verified: 'bg-green-500/20 text-green-600 dark:text-green-400',
     rejected: 'bg-red-500/20 text-red-600 dark:text-red-400',
     none: 'bg-gray-500/20 text-gray-500',
-  };
-
-  const isValidImage = (val: any): val is string => {
-    if (!val || typeof val !== 'string') return false;
-    return val.startsWith('data:image') || val.startsWith('http') || val.startsWith('https');
   };
 
   if (!dataLoaded) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin" /></div>;
@@ -207,10 +252,6 @@ export default function KYCPanel() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <div className="flex gap-1">
-                        {(isValidImage(user.kycIdPhoto) || isValidImage(user.idPhoto)) && <div className="w-5 h-5 rounded bg-green-500/10 flex items-center justify-center"><ImageIcon size={10} className="text-green-500" /></div>}
-                        {(isValidImage(user.kycSelfie) || isValidImage(user.selfiePhoto)) && <div className="w-5 h-5 rounded bg-blue-500/10 flex items-center justify-center"><Camera size={10} className="text-blue-500" /></div>}
-                      </div>
                       <Badge className={cn('text-[10px]', statusColor[user.kycStatus] || '')}>{statusLabel[user.kycStatus] || user.kycStatus}</Badge>
                     </div>
                   </div>
@@ -222,7 +263,7 @@ export default function KYCPanel() {
       </div>
 
       {/* Detail Dialog */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+      <Dialog open={detailOpen} onOpenChange={handleDialogChange}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><Shield className="w-5 h-5 text-[#5C1A1B]" />تفاصيل التحقق من الهوية</DialogTitle></DialogHeader>
           {selected && (
@@ -254,60 +295,81 @@ export default function KYCPanel() {
                 </div>
               )}
 
-              {/* AI Verification Results */}
-              {selected.kycAiResult && (
-                <div className="rounded-xl p-4 bg-blue-500/5 border border-blue-500/10 space-y-2">
-                  <h4 className="text-sm font-bold flex items-center gap-2 text-blue-500">🤖 نتائج التحقق التلقائي</h4>
-                  <div className="text-sm space-y-1">
-                    {selected.kycAiResult.nameMatch !== undefined && <p>تطابق الاسم: <Badge className={cn('text-[10px]', selected.kycAiResult.nameMatch ? 'bg-green-500/15 text-green-600' : 'bg-red-500/15 text-red-600')}>{selected.kycAiResult.nameMatch ? 'مطابق' : 'غير مطابق'}</Badge></p>}
-                    {selected.kycAiResult.faceMatch !== undefined && <p>تطابق الوجه: <Badge className={cn('text-[10px]', selected.kycAiResult.faceMatch ? 'bg-green-500/15 text-green-600' : 'bg-red-500/15 text-red-600')}>{selected.kycAiResult.faceMatch ? 'مطابق' : 'غير مطابق'}</Badge></p>}
-                    {selected.kycAiResult.confidence && <p>نسبة الثقة: {selected.kycAiResult.confidence}%</p>}
-                  </div>
-                </div>
-              )}
-
               <div className="space-y-4">
                 <h4 className="text-sm font-bold flex items-center gap-2"><Camera size={16} className="text-[#5C1A1B]" />صور التحقق</h4>
 
-                {(isValidImage(selected.kycIdPhoto) || isValidImage(selected.idPhoto)) ? (
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground flex items-center gap-1.5"><FileText size={14} />صورة البطاقة / الهوية</Label>
-                    <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(selected.kycIdPhoto || selected.idPhoto)}>
-                      <img src={selected.kycIdPhoto || selected.idPhoto} alt="صورة الهوية" className="w-full max-h-64 object-contain bg-white" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
-                      </div>
-                    </div>
+                {loadingDocs ? (
+                  <div className="rounded-xl p-6 bg-muted/30 border border-dashed border-border text-center">
+                    <Loader2 size={20} className="mx-auto animate-spin text-[#5C1A1B] mb-2" />
+                    <p className="text-xs text-muted-foreground">جاري تحميل الوثائق...</p>
+                  </div>
+                ) : kycDocs.length === 0 ? (
+                  <div className="rounded-xl p-6 bg-muted/30 border border-dashed border-border text-center">
+                    <FileText size={20} className="mx-auto text-muted-foreground mb-1" />
+                    <p className="text-xs text-muted-foreground">لم يتم رفع وثائق</p>
                   </div>
                 ) : (
-                  <div className="rounded-xl p-3 bg-muted/30 border border-dashed border-border text-center"><FileText size={20} className="mx-auto text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">لم يتم رفع صورة الهوية</p></div>
-                )}
+                  <>
+                    {/* ID Front */}
+                    {(() => {
+                      const doc = kycDocs.find((d: any) => d.document_type === 'national_id_front');
+                      return (
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground flex items-center gap-1.5"><FileText size={14} />صورة البطاقة / الهوية (الوجه)</Label>
+                          {doc && doc.document_url ? (
+                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.document_url)}>
+                              <img src={doc.document_url} alt="صورة الهوية - الوجه" className="w-full max-h-64 object-contain bg-white" />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-xl p-3 bg-muted/30 border border-dashed border-border text-center"><FileText size={20} className="mx-auto text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">لم يتم رفع صورة الوجه</p></div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
-                {(isValidImage(selected.kycSelfie) || isValidImage(selected.selfiePhoto)) ? (
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground flex items-center gap-1.5"><Camera size={14} />الصورة الشخصية (سيلفي)</Label>
-                    <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(selected.kycSelfie || selected.selfiePhoto)}>
-                      <img src={selected.kycSelfie || selected.selfiePhoto} alt="الصورة الشخصية" className="w-full max-h-64 object-contain bg-white" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-xl p-3 bg-muted/30 border border-dashed border-border text-center"><Camera size={20} className="mx-auto text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">لم يتم رفع صورة شخصية</p></div>
-                )}
+                    {/* ID Back */}
+                    {(() => {
+                      const doc = kycDocs.find((d: any) => d.document_type === 'national_id_back');
+                      return (
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground flex items-center gap-1.5"><CreditCard size={14} />صورة خلف البطاقة</Label>
+                          {doc && doc.document_url ? (
+                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.document_url)}>
+                              <img src={doc.document_url} alt="خلف البطاقة" className="w-full max-h-64 object-contain bg-white" />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-xl p-3 bg-muted/30 border border-dashed border-border text-center"><CreditCard size={20} className="mx-auto text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">لم يتم رفع صورة الخلف</p></div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
-                {/* Back ID Photo */}
-                {(isValidImage(selected.kycIdBackPhoto) || isValidImage(selected.idBackPhoto)) && (
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground flex items-center gap-1.5"><CreditCard size={14} />صورة خلف البطاقة</Label>
-                    <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(selected.kycIdBackPhoto || selected.idBackPhoto)}>
-                      <img src={selected.kycIdBackPhoto || selected.idBackPhoto} alt="خلف البطاقة" className="w-full max-h-64 object-contain bg-white" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
-                      </div>
-                    </div>
-                  </div>
+                    {/* Selfie */}
+                    {(() => {
+                      const doc = kycDocs.find((d: any) => d.document_type === 'selfie');
+                      return (
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground flex items-center gap-1.5"><Camera size={14} />الصورة الشخصية (سيلفي)</Label>
+                          {doc && doc.document_url ? (
+                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.document_url)}>
+                              <img src={doc.document_url} alt="الصورة الشخصية" className="w-full max-h-64 object-contain bg-white" />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-xl p-3 bg-muted/30 border border-dashed border-border text-center"><Camera size={20} className="mx-auto text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">لم يتم رفع صورة شخصية</p></div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </>
                 )}
               </div>
 

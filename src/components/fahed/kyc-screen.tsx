@@ -19,11 +19,8 @@ import {
   BadgeCheck,
   ScanLine,
   UserCheck,
-  Brain,
   AlertTriangle,
-  RotateCcw,
   Clock,
-  Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { governorates, cardTypes } from '@/lib/utils';
@@ -33,24 +30,6 @@ import { supabase } from '@/lib/supabase';
 import { sendNotificationToAdmin } from '@/lib/notifications';
 
 // ─── Types ────────────────────────────────────────────────────────
-
-interface VerificationCheck {
-  name: string;
-  label: string;
-  passed: boolean;
-  confidence: number;
-  details: string;
-}
-
-interface VerificationResult {
-  success: boolean;
-  documentType: string;
-  isValid: boolean;
-  confidence: number;
-  checks: VerificationCheck[];
-  overallAssessment: string;
-  error?: string;
-}
 
 type VerificationStatus = 'idle' | 'verifying' | 'success' | 'warning' | 'failed' | 'error';
 
@@ -71,30 +50,6 @@ const slideVariants = {
   }),
 };
 
-// ─── Helper: Status color and icon ───────────────────────────────
-
-function getCheckStatus(passed: boolean, confidence: number): { color: string; bgColor: string; icon: React.ReactNode } {
-  if (passed && confidence >= 70) {
-    return {
-      color: '#10B981',
-      bgColor: 'rgba(16,185,129,0.1)',
-      icon: <CheckCircle2 size={16} strokeWidth={2} color="#10B981" />,
-    };
-  }
-  if (passed && confidence >= 50) {
-    return {
-      color: '#F59E0B',
-      bgColor: 'rgba(245,158,11,0.1)',
-      icon: <AlertTriangle size={16} strokeWidth={2} color="#F59E0B" />,
-    };
-  }
-  return {
-    color: '#EF4444',
-    bgColor: 'rgba(239,68,68,0.1)',
-    icon: <X size={16} strokeWidth={2} color="#EF4444" />,
-  };
-}
-
 // ─── Main Component ───────────────────────────────────────────────
 
 export default function KYCScreen() {
@@ -106,7 +61,7 @@ export default function KYCScreen() {
   // Step management
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(1);
-  const totalSteps = 6;
+  const totalSteps = 5;
 
   // Form fields
   const [cardType, setCardType] = useState(user?.cardType || '');
@@ -124,11 +79,6 @@ export default function KYCScreen() {
   const [idBackProgress, setIdBackProgress] = useState(0);
   const [selfieProgress, setSelfieProgress] = useState(0);
 
-  // AI Verification results
-  const [idFrontVerification, setIdFrontVerification] = useState<VerificationResult | null>(null);
-  const [idBackVerification, setIdBackVerification] = useState<VerificationResult | null>(null);
-  const [selfieVerification, setSelfieVerification] = useState<VerificationResult | null>(null);
-
   // Verification status per document
   const [idFrontStatus, setIdFrontStatus] = useState<VerificationStatus>('idle');
   const [idBackStatus, setIdBackStatus] = useState<VerificationStatus>('idle');
@@ -145,7 +95,6 @@ export default function KYCScreen() {
     'وجه البطاقة',
     'خلف البطاقة',
     'صورة شخصية',
-    'نتائج التحقق',
     'إرسال الطلب',
   ];
 
@@ -154,8 +103,7 @@ export default function KYCScreen() {
     <CreditCard key="2" size={14} />,
     <ScanLine key="3" size={14} />,
     <Camera key="4" size={14} />,
-    <Brain key="5" size={14} />,
-    <ShieldCheck key="6" size={14} />,
+    <ShieldCheck key="5" size={14} />,
   ];
 
   // ─── Navigation ──────────────────────────────────────────────────
@@ -173,20 +121,14 @@ export default function KYCScreen() {
       case 3: return !!idBackUrl;
       case 4: return !!selfieUrl;
       case 5: return true;
-      case 6: return true;
       default: return false;
     }
   };
 
-  // ─── AI Verification DISABLED ─────────────────────────────────────
-  // The previous implementation called a dev-only proxy endpoint
-  // (/verify?XTransformPort=3035) that does not exist in production builds.
-  // Per product decision, KYC is now 100% manual: the user uploads the
-  // three images, the request is saved to Supabase, and an admin reviews
-  // the attached images in the admin app's KYC panel.
-  //
-  // We keep the function signature so the rest of the component (which calls
-  // verifyDocument after each upload) doesn't need to be rewritten. It just
+  // ─── Upload Success Marker ────────────────────────────────────────
+  // No AI verification is performed. The user uploads three images,
+  // the request is saved to Supabase, and an admin reviews the attached
+  // images manually in the admin app's KYC panel. This function simply
   // marks the upload as "success" so the user can proceed to the next step.
 
   const verifyDocument = async (_imageUrl: string, documentType: 'id_front' | 'id_back' | 'selfie') => {
@@ -195,22 +137,9 @@ export default function KYCScreen() {
       id_back: setIdBackStatus,
       selfie: setSelfieStatus,
     };
-    const setResultMap = {
-      id_front: setIdFrontVerification,
-      id_back: setIdBackVerification,
-      selfie: setSelfieVerification,
-    };
 
     // Mark as accepted pending manual admin review. No AI call.
     setStatusMap[documentType]('success');
-    setResultMap[documentType]({
-      success: true,
-      documentType,
-      isValid: true,
-      confidence: 100,
-      checks: [],
-      overallAssessment: 'تم رفع الصورة بنجاح، بانتظار المراجعة اليدوية من الإدارة',
-    });
   };
 
   // ─── Upload Handlers ─────────────────────────────────────────────
@@ -257,16 +186,6 @@ export default function KYCScreen() {
             document_type: d.document_type,
             document_url: d.document_url,
             status: 'pending',
-            ai_verification_result: {
-              mode: 'manual_review',
-              note: 'AI verification disabled — pending admin review',
-              uploadedAt: new Date().toISOString(),
-              cardType,
-              cardNumber,
-              cardIssuedAt,
-              governorate,
-            },
-            ai_confidence_score: 0,
           })));
         if (docsError) throw docsError;
       }
@@ -316,13 +235,6 @@ export default function KYCScreen() {
     }
   };
 
-  // ─── Re-verify document ──────────────────────────────────────────
-
-  const reVerify = async (documentType: 'id_front' | 'id_back' | 'selfie') => {
-    const urlMap = { id_front: idFrontUrl, id_back: idBackUrl, selfie: selfieUrl };
-    await verifyDocument(urlMap[documentType], documentType);
-  };
-
   // ─── Styles ──────────────────────────────────────────────────────
 
   const glassCardStyle = {
@@ -351,7 +263,7 @@ export default function KYCScreen() {
 
   // ─── Verification Status Badge ───────────────────────────────────
 
-  const VerificationBadge = ({ status, onReVerify }: { status: VerificationStatus; onReVerify?: () => void }) => {
+  const VerificationBadge = ({ status }: { status: VerificationStatus }) => {
     const config: Record<VerificationStatus, { icon: React.ReactNode; text: string; color: string; bg: string }> = {
       idle: { icon: null, text: '', color: '', bg: '' },
       verifying: {
@@ -362,7 +274,7 @@ export default function KYCScreen() {
       },
       success: {
         icon: <CheckCircle2 size={14} strokeWidth={2} color="#10B981" />,
-        text: 'تم التحقق',
+        text: 'تم الرفع',
         color: '#10B981',
         bg: 'rgba(16,185,129,0.08)',
       },
@@ -403,85 +315,6 @@ export default function KYCScreen() {
           {c.icon}
           <span>{c.text}</span>
         </div>
-        {(status === 'warning' || status === 'failed' || status === 'error') && onReVerify && (
-          <button
-            onClick={onReVerify}
-            className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium"
-            style={{ background: 'rgba(92,26,27,0.08)', color: '#5C1A1B' }}
-          >
-            <RotateCcw size={10} />
-            إعادة التحقق
-          </button>
-        )}
-      </motion.div>
-    );
-  };
-
-  // ─── Verification Checks Display ─────────────────────────────────
-
-  const VerificationChecks = ({ verification }: { verification: VerificationResult | null }) => {
-    if (!verification) return null;
-
-    return (
-      <motion.div
-        initial={{ opacity: 0, height: 0 }}
-        animate={{ opacity: 1, height: 'auto' }}
-        className="mt-3 space-y-2"
-      >
-        <div className="flex items-center gap-1.5 mb-2">
-          <Brain size={14} color="#5C1A1B" />
-          <span className="text-xs font-bold" style={{ color: '#5C1A1B' }}>
-            نتائج التحقق بالذكاء الاصطناعي
-          </span>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-            style={{
-              background: verification.confidence >= 70 ? 'rgba(16,185,129,0.1)' : verification.confidence >= 50 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-              color: verification.confidence >= 70 ? '#10B981' : verification.confidence >= 50 ? '#F59E0B' : '#EF4444',
-            }}
-          >
-            {verification.confidence}%
-          </span>
-        </div>
-
-        {verification.checks.map((check, i) => {
-          const status = getCheckStatus(check.passed, check.confidence);
-          return (
-            <motion.div
-              key={check.name}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.08 }}
-              className="flex items-start gap-2 px-3 py-2 rounded-xl"
-              style={{ background: status.bgColor }}
-            >
-              <div className="mt-0.5 shrink-0">{status.icon}</div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold" style={{ color: status.color }}>
-                    {check.label}
-                  </span>
-                  <span className="text-[10px] font-medium" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    {check.confidence}%
-                  </span>
-                </div>
-                <p className="text-[10px] mt-0.5" style={{ color: isDark ? '#777' : '#999' }}>
-                  {check.details}
-                </p>
-              </div>
-            </motion.div>
-          );
-        })}
-
-        {verification.overallAssessment && (
-          <div
-            className="px-3 py-2 rounded-xl text-xs"
-            style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}
-          >
-            <span className="font-medium" style={{ color: isDark ? '#AAA' : '#888' }}>التقييم: </span>
-            <span style={{ color: isDark ? '#DDD' : '#333' }}>{verification.overallAssessment}</span>
-          </div>
-        )}
       </motion.div>
     );
   };
@@ -713,48 +546,6 @@ export default function KYCScreen() {
             سيتم مراجعة بياناتك والرد عليك خلال 24 ساعة
           </p>
 
-          {/* AI Verification Summary */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="w-full mt-6 rounded-2xl p-4 space-y-2"
-            style={{
-              background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.8)',
-              border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-            }}
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <Brain size={16} color="#5C1A1B" />
-              <span className="text-xs font-bold" style={{ color: '#5C1A1B' }}>ملخص التحقق الذكي</span>
-            </div>
-            {[
-              { label: 'وجه البطاقة', result: idFrontVerification },
-              { label: 'خلف البطاقة', result: idBackVerification },
-              { label: 'الصورة الشخصية', result: selfieVerification },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between py-1.5">
-                <span className="text-xs" style={{ color: isDark ? '#AAA' : '#888' }}>{item.label}</span>
-                {item.result && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold" style={{
-                      color: item.result.confidence >= 70 ? '#10B981' : item.result.confidence >= 50 ? '#F59E0B' : '#EF4444'
-                    }}>
-                      {item.result.confidence}%
-                    </span>
-                    {item.result.isValid && item.result.confidence >= 70 ? (
-                      <CheckCircle2 size={12} color="#10B981" />
-                    ) : item.result.confidence >= 50 ? (
-                      <AlertTriangle size={12} color="#F59E0B" />
-                    ) : (
-                      <X size={12} color="#EF4444" />
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </motion.div>
-
           <button
             onClick={() => setActiveScreen('main')}
             className="mt-6 px-8 py-3 rounded-2xl text-sm font-bold text-white"
@@ -789,10 +580,6 @@ export default function KYCScreen() {
           <h1 className="text-xl font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
             التحقق من الهوية
           </h1>
-          <div className="mr-auto flex items-center gap-1 px-2 py-1 rounded-full" style={{ background: 'rgba(92,26,27,0.08)' }}>
-            <Sparkles size={12} color="#5C1A1B" />
-            <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>AI</span>
-          </div>
         </div>
 
         <KYCStatusBanner />
@@ -1026,8 +813,7 @@ export default function KYCScreen() {
                 preview={idFrontUrl || undefined}
               />
 
-              <VerificationBadge status={idFrontStatus} onReVerify={() => reVerify('id_front')} />
-              <VerificationChecks verification={idFrontVerification} />
+              <VerificationBadge status={idFrontStatus} />
             </motion.div>
           )}
 
@@ -1070,8 +856,7 @@ export default function KYCScreen() {
                 preview={idBackUrl || undefined}
               />
 
-              <VerificationBadge status={idBackStatus} onReVerify={() => reVerify('id_back')} />
-              <VerificationChecks verification={idBackVerification} />
+              <VerificationBadge status={idBackStatus} />
             </motion.div>
           )}
 
@@ -1115,195 +900,14 @@ export default function KYCScreen() {
                 preview={selfieUrl || undefined}
               />
 
-              <VerificationBadge status={selfieStatus} onReVerify={() => reVerify('selfie')} />
-              <VerificationChecks verification={selfieVerification} />
+              <VerificationBadge status={selfieStatus} />
             </motion.div>
           )}
 
-          {/* ─── Step 5: AI Verification Results Summary ─── */}
+          {/* ─── Step 5: Submit for Manual Review ─── */}
           {step === 5 && (
             <motion.div
               key="step5"
-              custom={direction}
-              variants={slideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ duration: 0.3 }}
-              className="space-y-4"
-            >
-              <div className="flex flex-col items-center mb-4">
-                <div
-                  className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
-                  style={{ background: 'rgba(92,26,27,0.08)', border: '1px solid rgba(92,26,27,0.15)' }}
-                >
-                  <Brain size={28} strokeWidth={1.5} color="#5C1A1B" />
-                </div>
-                <h3 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
-                  نتائج التحقق الذكي
-                </h3>
-                <p className="text-xs text-center mt-1 max-w-[250px]" style={{ color: isDark ? '#888' : '#AAA' }}>
-                  ملخص نتائج التحقق بالذكاء الاصطناعي
-                </p>
-              </div>
-
-              {/* Overall Score */}
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="flex flex-col items-center p-5 rounded-2xl"
-                style={{
-                  background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.8)',
-                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-                }}
-              >
-                <div className="relative w-24 h-24 mb-3">
-                  <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
-                    <path
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                      fill="none"
-                      stroke={isDark ? '#3D0F10' : '#EEE'}
-                      strokeWidth="3"
-                    />
-                    <path
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                      fill="none"
-                      stroke={(() => {
-                        const avg = Math.round(
-                          ((idFrontVerification?.confidence || 0) +
-                           (idBackVerification?.confidence || 0) +
-                           (selfieVerification?.confidence || 0)) / 3
-                        );
-                        return avg >= 70 ? '#10B981' : avg >= 50 ? '#F59E0B' : '#EF4444';
-                      })()}
-                      strokeWidth="3"
-                      strokeDasharray={`${Math.round(
-                        ((idFrontVerification?.confidence || 0) +
-                         (idBackVerification?.confidence || 0) +
-                         (selfieVerification?.confidence || 0)) / 3
-                      )}, 100`}
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-xl font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
-                      {Math.round(
-                        ((idFrontVerification?.confidence || 0) +
-                         (idBackVerification?.confidence || 0) +
-                         (selfieVerification?.confidence || 0)) / 3
-                      )}%
-                    </span>
-                  </div>
-                </div>
-                <p className="text-xs font-medium" style={{ color: isDark ? '#AAA' : '#888' }}>
-                  نسبة التحقق الإجمالية
-                </p>
-              </motion.div>
-
-              {/* Individual Results */}
-              {[
-                { label: 'وجه البطاقة', icon: <CreditCard size={18} color="#5C1A1B" />, verification: idFrontVerification, status: idFrontStatus, docType: 'id_front' as const },
-                { label: 'خلف البطاقة', icon: <ScanLine size={18} color="#5C1A1B" />, verification: idBackVerification, status: idBackStatus, docType: 'id_back' as const },
-                { label: 'الصورة الشخصية', icon: <UserCheck size={18} color="#5C1A1B" />, verification: selfieVerification, status: selfieStatus, docType: 'selfie' as const },
-              ].map((item, i) => (
-                <motion.div
-                  key={item.label}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.1 }}
-                  className="rounded-2xl p-4"
-                  style={{
-                    background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.8)',
-                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.08)' }}>
-                        {item.icon}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
-                          {item.label}
-                        </p>
-                        <p className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>
-                          {item.verification?.overallAssessment || 'لم يتم التحقق'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {item.verification && (
-                        <span className="text-sm font-bold" style={{
-                          color: item.verification.confidence >= 70 ? '#10B981' :
-                                 item.verification.confidence >= 50 ? '#F59E0B' : '#EF4444'
-                        }}>
-                          {item.verification.confidence}%
-                        </span>
-                      )}
-                      {item.status === 'success' && <CheckCircle2 size={18} color="#10B981" />}
-                      {item.status === 'warning' && <AlertTriangle size={18} color="#F59E0B" />}
-                      {item.status === 'failed' && <X size={18} color="#EF4444" />}
-                      {item.status === 'verifying' && <Loader2 size={18} className="animate-spin" color="#5C1A1B" />}
-                      {item.status === 'error' && <AlertCircle size={18} color="#EF4444" />}
-                      {item.status === 'idle' && <div className="w-4 h-4 rounded-full border-2" style={{ borderColor: isDark ? '#555' : '#CCC' }} />}
-                    </div>
-                  </div>
-
-                  {/* Sub-checks */}
-                  {item.verification?.checks && item.verification.checks.length > 0 && (
-                    <div className="mt-3 space-y-1.5">
-                      {item.verification.checks.map((check) => {
-                        const status = getCheckStatus(check.passed, check.confidence);
-                        return (
-                          <div key={check.name} className="flex items-center gap-2 text-xs">
-                            {status.icon}
-                            <span style={{ color: isDark ? '#AAA' : '#888' }}>{check.label}</span>
-                            <span className="mr-auto text-[10px]" style={{ color: isDark ? '#666' : '#BBB' }}>
-                              {check.confidence}%
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Re-verify button */}
-                  {(item.status === 'warning' || item.status === 'failed' || item.status === 'error') && (
-                    <button
-                      onClick={() => reVerify(item.docType)}
-                      className="mt-2 flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-lg"
-                      style={{ background: 'rgba(92,26,27,0.08)', color: '#5C1A1B' }}
-                    >
-                      <RotateCcw size={10} />
-                      إعادة التحقق
-                    </button>
-                  )}
-                </motion.div>
-              ))}
-
-              {/* Note */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.4 }}
-                className="flex items-start gap-2 px-4 py-3 rounded-xl"
-                style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.12)' }}
-              >
-                <AlertTriangle size={16} color="#F59E0B" className="shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-xs font-bold" style={{ color: '#F59E0B' }}>ملاحظة</p>
-                  <p className="text-[10px] mt-0.5" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    التحقق بالذكاء الاصطناعي استرشادي فقط. سيتم مراجعة المستندات يدوياً من قبل الإدارة.
-                  </p>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-
-          {/* ─── Step 6: Submit for Manual Review ─── */}
-          {step === 6 && (
-            <motion.div
-              key="step6"
               custom={direction}
               variants={slideVariants}
               initial="enter"
@@ -1376,9 +980,9 @@ export default function KYCScreen() {
                 </div>
 
                 {[
-                  { label: 'وجه البطاقة', uploaded: !!idFrontUrl, verification: idFrontVerification },
-                  { label: 'خلف البطاقة', uploaded: !!idBackUrl, verification: idBackVerification },
-                  { label: 'الصورة الشخصية', uploaded: !!selfieUrl, verification: selfieVerification },
+                  { label: 'وجه البطاقة', uploaded: !!idFrontUrl },
+                  { label: 'خلف البطاقة', uploaded: !!idBackUrl },
+                  { label: 'الصورة الشخصية', uploaded: !!selfieUrl },
                 ].map((item, i, arr) => (
                   <div key={item.label}>
                     <div className="flex items-center justify-between">
@@ -1392,39 +996,13 @@ export default function KYCScreen() {
                           {item.label}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {item.verification && (
-                          <span className="text-[10px] font-bold" style={{
-                            color: item.verification.confidence >= 70 ? '#10B981' :
-                                   item.verification.confidence >= 50 ? '#F59E0B' : '#EF4444'
-                          }}>
-                            {item.verification.confidence}%
-                          </span>
-                        )}
-                        <span className="text-xs font-medium" style={{ color: item.uploaded ? '#10B981' : '#EF4444' }}>
-                          {item.uploaded ? 'تم الرفع' : 'لم يتم الرفع'}
-                        </span>
-                      </div>
+                      <span className="text-xs font-medium" style={{ color: item.uploaded ? '#10B981' : '#EF4444' }}>
+                        {item.uploaded ? 'تم الرفع' : 'لم يتم الرفع'}
+                      </span>
                     </div>
                     {i < arr.length - 1 && <div className="h-px mt-2" style={{ background: isDark ? '#2A2A2A' : '#F0F0F0' }} />}
                   </div>
                 ))}
-              </div>
-
-              {/* AI Verification Note */}
-              <div
-                className="rounded-2xl p-4 flex items-center gap-3"
-                style={{ background: 'rgba(92,26,27,0.04)', border: '1px solid rgba(92,26,27,0.1)' }}
-              >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(92,26,27,0.08)' }}>
-                  <Brain size={18} color="#5C1A1B" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold" style={{ color: '#5C1A1B' }}>تحقق ذكي</p>
-                  <p className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    سيتم مراجعة المستندات يدوياً بجانب نتيجة الذكاء الاصطناعي
-                  </p>
-                </div>
               </div>
             </motion.div>
           )}

@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ref, get, update } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +11,14 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Palette, Save, Loader2, Upload, Eye, Smartphone, Type, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+// Singleton row id in the `branding` table — matches what the user app reads.
+const BRANDING_ID = 'default';
+// app_config key used to persist fields that don't have a dedicated column
+// in the `branding` table (e.g. splash text color).
+const BRANDING_EXTRAS_KEY = 'branding_extras';
+// app_config key for the project config blob (preserved when syncing app name).
+const PROJECT_CONFIG_KEY = 'projectConfig';
 
 export default function BrandingPanel() {
   const { adminUser, showToast } = useAdminStore();
@@ -33,18 +40,33 @@ export default function BrandingPanel() {
   useEffect(() => {
     const loadBranding = async () => {
       try {
-        const snapshot = await get(ref(database, 'ownerSettings/branding'));
-        const data = snapshot.val();
-        if (data) {
-          setAppNameAr(data.appNameAr || '');
-          setAppNameEn(data.appNameEn || '');
-          setAppIcon(data.appIcon || '');
-          setAppIconPreview(data.appIcon || '');
-          setPrimaryColor(data.primaryColor || '#5C1A1B');
-          setSecondaryColor(data.secondaryColor || '#C41E3A');
-          setAccentColor(data.accentColor || '#D44A5C');
-          setSplashBgColor(data.splashBgColor || '#1A0A0E');
-          setSplashTextColor(data.splashTextColor || '#F5E6E8');
+        // 1) Read the singleton branding row (snake_case columns).
+        const { data, error } = await supabaseAdmin
+          .from('branding')
+          .select('*')
+          .eq('id', BRANDING_ID)
+          .maybeSingle();
+        if (error) {
+          console.error('Error loading branding:', error.message);
+        } else if (data) {
+          setAppNameAr(data.app_name || '');
+          setAppNameEn(data.app_name_en || '');
+          setAppIcon(data.logo_url || '');
+          setAppIconPreview(data.logo_url || '');
+          setPrimaryColor(data.primary_color || '#5C1A1B');
+          setSecondaryColor(data.secondary_color || '#C41E3A');
+          setAccentColor(data.accent_color || '#D44A5C');
+          setSplashBgColor(data.splash_background || '#1A0A0E');
+        }
+        // 2) Read the extras blob (splash text color, etc.) from app_config.
+        const { data: extrasRow, error: extrasErr } = await supabaseAdmin
+          .from('app_config')
+          .select('value')
+          .eq('key', BRANDING_EXTRAS_KEY)
+          .maybeSingle();
+        if (!extrasErr && extrasRow?.value) {
+          const extras = extrasRow.value as Record<string, any>;
+          setSplashTextColor(extras.splashTextColor || '#F5E6E8');
         }
       } catch (e) {
         console.error('Error loading branding:', e);
@@ -69,19 +91,66 @@ export default function BrandingPanel() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await update(ref(database, 'ownerSettings/branding'), {
-        appNameAr, appNameEn, appIcon, primaryColor, secondaryColor,
-        accentColor, splashBgColor, splashTextColor,
-        updatedAt: new Date().toISOString(), updatedBy: adminUser?.uid,
-      });
-      // Also update project config for app name
-      await update(ref(database, 'ownerSettings/projectConfig'), {
-        appName: appNameAr, appNameEn,
-      });
+      const nowIso = new Date().toISOString();
+      // 1) Upsert the branding row (snake_case columns).
+      const { error: bErr } = await supabaseAdmin
+        .from('branding')
+        .upsert({
+          id: BRANDING_ID,
+          app_name: appNameAr,
+          app_name_en: appNameEn,
+          logo_url: appIcon,
+          primary_color: primaryColor,
+          secondary_color: secondaryColor,
+          accent_color: accentColor,
+          splash_background: splashBgColor,
+          updated_at: nowIso,
+        }, { onConflict: 'id' });
+      if (bErr) {
+        console.error('Branding upsert error:', bErr);
+        showToast('فشل حفظ إعدادات العلامة التجارية: ' + bErr.message, 'error');
+        return;
+      }
+
+      // 2) Persist extras (splash text color) to app_config.
+      const { error: extrasErr } = await supabaseAdmin
+        .from('app_config')
+        .upsert({
+          key: BRANDING_EXTRAS_KEY,
+          value: { splashTextColor, updatedBy: adminUser?.uid || null },
+          updated_at: nowIso,
+        }, { onConflict: 'key' });
+      if (extrasErr) console.warn('Branding extras upsert warning:', extrasErr.message);
+
+      // 3) Merge appName/appNameEn into the existing projectConfig blob
+      //    WITHOUT overwriting the rest (theme, colors, version, etc.).
+      const { data: existingConfig } = await supabaseAdmin
+        .from('app_config')
+        .select('value')
+        .eq('key', PROJECT_CONFIG_KEY)
+        .maybeSingle();
+      const existingValue = (existingConfig?.value as Record<string, any>) || {};
+      const mergedConfig = {
+        ...existingValue,
+        appName: appNameEn || appNameAr,
+        appNameAr,
+        appNameEn,
+      };
+      await supabaseAdmin
+        .from('app_config')
+        .upsert({
+          key: PROJECT_CONFIG_KEY,
+          value: mergedConfig,
+          updated_at: nowIso,
+        }, { onConflict: 'key' });
+
       setSaveSuccess(true);
       showToast('تم حفظ إعدادات العلامة التجارية', 'success');
       setTimeout(() => setSaveSuccess(false), 2000);
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) {
+      console.error('Error saving branding:', e);
+      showToast('حدث خطأ: ' + (e?.message || ''), 'error');
+    }
     finally { setSaving(false); }
   };
 

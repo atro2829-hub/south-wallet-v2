@@ -4,9 +4,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ref, onValue, update, remove, set, push } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
-import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -136,19 +134,8 @@ export default function ApiProvidersPanel() {
   const [commissionType, setCommissionType] = useState<'percentage' | 'fixed'>('percentage');
   const [icon, setIcon] = useState('');
 
-  // Listen to API providers from Firebase
-  useEffect(() => {
-    const provRef = ref(database, 'adminSettings/apiProviders');
-    const unsub = onValue(provRef, (snapshot) => {
-      setProviders(snapshot.val() || {});
-      setLoading(false);
-    });
-    return () => unsub();
-  }, []);
-
-  // Load providers from Supabase (source of truth) so the list reflects
-  // what was actually saved — the Firebase listener above won't fire for
-  // providers saved via supabaseAdmin (the new save path).
+  // Load providers from Supabase (source of truth). Converts the snake_case
+  // rows into the camelCase record shape the rest of the component expects.
   const loadProviders = useCallback(async () => {
     try {
       const { data, error } = await supabaseAdmin.from('api_providers')
@@ -157,7 +144,6 @@ export default function ApiProvidersPanel() {
         console.warn('[loadProviders] supabase error:', error.message);
         return;
       }
-      // Convert array to the record shape the component expects (camelCase).
       const map: Record<string, any> = {};
       for (const p of data || []) {
         map[p.id] = {
@@ -182,9 +168,12 @@ export default function ApiProvidersPanel() {
       setProviders(map);
     } catch (e) {
       console.warn('[loadProviders] exception:', e);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
+  // Listen to API providers from Supabase (source of truth).
   useEffect(() => {
     loadProviders();
     const channel = supabaseAdmin.channel(`api-providers-${Date.now()}`)
@@ -221,25 +210,41 @@ export default function ApiProvidersPanel() {
     return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
   }, []);
 
-  // Load balance logs from Firebase
-  useEffect(() => {
-    const logRef = ref(database, 'adminSettings/balanceLogs');
-    const unsub = onValue(logRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const logs: BalanceLogEntry[] = Object.entries(data).map(([id, v]: [string, any]) => ({
-        id,
-        providerId: v.providerId || '',
-        providerName: v.providerName || '',
-        previousBalance: v.previousBalance || 0,
-        newBalance: v.newBalance || 0,
-        currency: v.currency || 'USD',
-        changedAt: v.changedAt || '',
+  // Load balance logs from Supabase (api_balance_log table) — joins with
+  // the providers map to populate providerName.
+  const loadBalanceLogs = useCallback(async () => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('api_balance_log')
+        .select('id, api_provider_id, balance, previous_balance, change_amount, currency, checked_at')
+        .order('checked_at', { ascending: false })
+        .limit(100);
+      if (error) {
+        console.warn('[loadBalanceLogs] error:', error.message);
+        return;
+      }
+      const logs: BalanceLogEntry[] = (data || []).map((r: any) => ({
+        id: r.id,
+        providerId: r.api_provider_id || '',
+        providerName: providers[r.api_provider_id]?.name || r.api_provider_id || '',
+        previousBalance: Number(r.previous_balance ?? 0),
+        newBalance: Number(r.balance ?? 0),
+        currency: r.currency || 'USD',
+        changedAt: r.checked_at || '',
       }));
-      logs.sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime());
       setBalanceLogs(logs);
-    });
-    return () => unsub();
-  }, []);
+    } catch (e) {
+      console.warn('[loadBalanceLogs] exception:', e);
+    }
+  }, [providers]);
+
+  useEffect(() => {
+    loadBalanceLogs();
+    const channel = supabaseAdmin.channel(`api-balance-logs-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'api_balance_log' }, () => loadBalanceLogs())
+      .subscribe();
+    return () => { try { supabaseAdmin.removeChannel(channel); } catch {} };
+  }, [loadBalanceLogs]);
 
   const resetForm = () => {
     setName(''); setBaseUrl(''); setApiKey(''); setApiSecret(''); setAuthHeader('X-API-Key');
@@ -266,31 +271,30 @@ export default function ApiProvidersPanel() {
     currency: string,
   ) => {
     if (previousBalance === newBalance) return;
-    const logRef = push(ref(database, 'adminSettings/balanceLogs'));
-    await set(logRef, {
-      providerId,
-      providerName,
-      previousBalance,
-      newBalance,
+    const { error } = await supabaseAdmin.from('api_balance_log').insert({
+      api_provider_id: providerId,
+      previous_balance: previousBalance,
+      balance: newBalance,
+      change_amount: newBalance - previousBalance,
       currency,
-      changedAt: new Date().toISOString(),
+      checked_at: new Date().toISOString(),
     });
+    if (error) console.warn('[recordBalanceLog] insert error:', error.message);
+    // `providerName` is intentionally not stored — there's no name column on
+    // api_balance_log. We re-derive it from the providers map at display time.
   }, []);
 
   // ─── Record balance history point ──────────────────────────────────
+  // The legacy Firebase structure stored one entry per provider per day.
+  // With Supabase we already insert a row per check in api_balance_log
+  // (via recordBalanceLog), so this is now a no-op — the chart derives its
+  // 7-day history directly from api_balance_log rows (see getBalanceHistory).
   const recordBalanceHistory = useCallback(async (
-    providerId: string,
-    balance: number,
-    currency: string,
+    _providerId: string,
+    _balance: number,
+    _currency: string,
   ) => {
-    const today = new Date().toISOString().split('T')[0];
-    const historyRef = ref(database, `adminSettings/apiProviders/${providerId}/balanceHistory/${today}`);
-    await set(historyRef, {
-      date: today,
-      balance,
-      currency,
-      recordedAt: new Date().toISOString(),
-    });
+    // intentionally left as a no-op (see comment above)
   }, []);
 
   // ─── Save Provider ─────────────────────────────────────────────────
@@ -383,21 +387,14 @@ export default function ApiProvidersPanel() {
   // ─── Delete Provider (with confirmation) ───────────────────────────
   const handleDelete = async (id: string) => {
     try {
-      await remove(ref(database, `adminSettings/apiProviders/${id}`));
       const prov = providers[id];
-      if (prov?.sectionId) {
-        await remove(ref(database, `sections/${prov.sectionId}/subSections/${id}`));
-      }
-      // Also delete from Supabase
-      try {
-        await supabase.from('api_providers').delete().eq('id', id);
-      } catch (sbErr) {
-        console.warn('Supabase delete warning:', sbErr);
-      }
+      // Delete from Supabase (service role bypasses RLS).
+      const { error: sbErr } = await supabaseAdmin.from('api_providers').delete().eq('id', id);
+      if (sbErr) console.warn('Supabase delete warning:', sbErr.message);
       showToast('تم حذف المزود', 'success');
       setDeleteConfirm(null);
-    } catch {
-      showToast('حدث خطأ', 'error');
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e?.message || ''), 'error');
     }
   };
 
@@ -424,11 +421,17 @@ export default function ApiProvidersPanel() {
         if (balanceResult) {
           const prevBalance = prov.balance || 0;
           setTestResult(prev => prev ? { ...prev, balance: `${balanceResult.balance} ${balanceResult.currency}` } : null);
-          await update(ref(database, `adminSettings/apiProviders/${providerId}`), {
-            balance: balanceResult.balance,
-            balanceCurrency: balanceResult.currency,
-            lastBalanceCheck: new Date().toISOString(),
-          });
+          // Update provider balance in Supabase (snake_case columns).
+          const { error: balErr } = await supabaseAdmin
+            .from('api_providers')
+            .update({
+              balance: balanceResult.balance,
+              balance_currency: balanceResult.currency,
+              last_balance_check: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', providerId);
+          if (balErr) console.warn('[handleTest] balance update error:', balErr.message);
           await recordBalanceLog(providerId, prov.name, prevBalance, balanceResult.balance, balanceResult.currency);
           await recordBalanceHistory(providerId, balanceResult.balance, balanceResult.currency);
         }
@@ -453,11 +456,16 @@ export default function ApiProvidersPanel() {
       const balanceResult = await fetchProviderBalance(config);
       if (balanceResult) {
         const prevBalance = prov.balance || 0;
-        await update(ref(database, `adminSettings/apiProviders/${providerId}`), {
-          balance: balanceResult.balance,
-          balanceCurrency: balanceResult.currency,
-          lastBalanceCheck: new Date().toISOString(),
-        });
+        const { error: balErr } = await supabaseAdmin
+          .from('api_providers')
+          .update({
+            balance: balanceResult.balance,
+            balance_currency: balanceResult.currency,
+            last_balance_check: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', providerId);
+        if (balErr) console.warn('[handleRefreshBalance] balance update error:', balErr.message);
         await recordBalanceLog(providerId, prov.name, prevBalance, balanceResult.balance, balanceResult.currency);
         await recordBalanceHistory(providerId, balanceResult.balance, balanceResult.currency);
         showToast(`الرصيد: ${balanceResult.balance} ${balanceResult.currency}`, 'success');
@@ -487,11 +495,16 @@ export default function ApiProvidersPanel() {
         const balanceResult = await fetchProviderBalance(config);
         if (balanceResult) {
           const prevBalance = prov.balance || 0;
-          await update(ref(database, `adminSettings/apiProviders/${prov.id}`), {
-            balance: balanceResult.balance,
-            balanceCurrency: balanceResult.currency,
-            lastBalanceCheck: new Date().toISOString(),
-          });
+          const { error: balErr } = await supabaseAdmin
+            .from('api_providers')
+            .update({
+              balance: balanceResult.balance,
+              balance_currency: balanceResult.currency,
+              last_balance_check: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', prov.id);
+          if (balErr) console.warn('[handleCheckAllBalances] balance update error:', balErr.message);
           await recordBalanceLog(prov.id, prov.name, prevBalance, balanceResult.balance, balanceResult.currency);
           await recordBalanceHistory(prov.id, balanceResult.balance, balanceResult.currency);
           checked++;
@@ -516,7 +529,7 @@ export default function ApiProvidersPanel() {
         sectionId: prov.sectionId || 'service-providers',
         icon: prov.icon || '',
       };
-      const result = await syncProviderToFirebase(config, database, ref, update);
+      const result = await syncProviderToFirebase(config);
       showToast(`تمت المزامنة: ${result.categoriesCount} تصنيف و ${result.productsCount} منتج`, 'success');
     } catch (e: any) {
       showToast(`فشلت المزامنة: ${e.message}`, 'error');
@@ -528,68 +541,45 @@ export default function ApiProvidersPanel() {
   // ─── Toggle Active ─────────────────────────────────────────────────
   const handleToggleActive = async (providerId: string, active: boolean) => {
     try {
-      await update(ref(database, `adminSettings/apiProviders/${providerId}`), { isActive: active });
-      const prov = providers[providerId];
-      if (prov?.sectionId) {
-        await update(ref(database, `sections/${prov.sectionId}/subSections/${providerId}`), { isActive: active });
-      }
-      // Also update Supabase
-      try {
-        await supabase.from('api_providers').update({ is_active: active }).eq('id', providerId);
-      } catch (sbErr) {
-        console.warn('Supabase update warning:', sbErr);
-      }
+      // Update is_active on the Supabase api_providers row (service role).
+      const { error: sbErr } = await supabaseAdmin
+        .from('api_providers')
+        .update({ is_active: active, updated_at: new Date().toISOString() })
+        .eq('id', providerId);
+      if (sbErr) console.warn('[handleToggleActive] Supabase update warning:', sbErr.message);
       showToast(active ? 'تم تفعيل المزود' : 'تم تعطيل المزود', 'success');
-    } catch {
-      showToast('حدث خطأ', 'error');
+    } catch (e: any) {
+      showToast('حدث خطأ: ' + (e?.message || ''), 'error');
     }
   };
 
   // ─── Quick Add G2Bulk ──────────────────────────────────────────────
   const handleQuickAddG2Bulk = async () => {
     try {
-      const g2bulkData = {
-        id: 'g2bulk', name: 'G2Bulk', baseUrl: 'https://api.g2bulk.com/v1/',
-        apiKey: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '',
-        authHeader: 'X-API-Key', isActive: true, syncEnabled: true,
-        sectionId: 'service-providers', sectionName: 'خدمات المزودين', sectionIcon: 'globe',
-        commission: 5, commissionType: 'percentage',
-        balance: 0, balanceCurrency: 'USD', lastBalanceCheck: '',
-        createdAt: new Date().toISOString(),
-      };
-      await set(ref(database, 'adminSettings/apiProviders/g2bulk'), g2bulkData);
-
-      await set(ref(database, 'sections/service-providers/subSections/g2bulk'), {
-        id: 'g2bulk', name: 'G2Bulk', icon: '', isActive: true,
-        parentId: 'service-providers', sortOrder: 0, apiProviderId: 'g2bulk',
-      });
-
-      // Also insert to Supabase
-      try {
-        await supabase.from('api_providers').upsert({
-          id: 'g2bulk',
-          name: 'G2Bulk',
-          description: 'G2Bulk API Provider',
-          website: 'https://g2bulk.com',
-          api_url: 'https://api.g2bulk.com/v1/',
-          api_key: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '',
-          auth_header: 'X-API-Key',
-          auth_type: 'header',
-          is_active: true,
-          balance: 0,
-          balance_currency: 'USD',
-          default_commission: 5,
-          commission_type: 'percentage',
-          sync_categories: true,
-          sync_products: true,
-          config: { sectionId: 'service-providers' },
-        }, { onConflict: 'id' });
-      } catch (sbErr) {
-        console.warn('Supabase insert warning:', sbErr);
-      }
+      // Insert/upsert to Supabase (service role bypasses RLS).
+      const { error: sbErr } = await supabaseAdmin.from('api_providers').upsert({
+        id: 'g2bulk',
+        name: 'G2Bulk',
+        description: 'G2Bulk API Provider',
+        website: 'https://g2bulk.com',
+        api_url: 'https://api.g2bulk.com/v1/',
+        api_key: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '',
+        auth_header: 'X-API-Key',
+        auth_type: 'header',
+        is_active: true,
+        balance: 0,
+        balance_currency: 'USD',
+        default_commission: 5,
+        commission_type: 'percentage',
+        sync_categories: true,
+        sync_products: true,
+        config: { sectionId: 'service-providers' },
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+      if (sbErr) console.warn('[handleQuickAddG2Bulk] Supabase upsert warning:', sbErr.message);
 
       showToast('تم إضافة G2Bulk', 'success');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + (e?.message || ''), 'error'); }
   };
 
   // ─── Export Balance Logs to CSV ────────────────────────────────────
@@ -636,20 +626,32 @@ export default function ApiProvidersPanel() {
   }, null);
 
   // ─── Get Balance History for chart (last 7 days) ──────────────────
+  // Derived from the balanceLogs state (loaded from api_balance_log).
+  // For each of the last 7 days, takes the most recent log entry for that
+  // provider on or before that day; carries forward the last known balance.
   const getBalanceHistory = (prov: any): BalanceHistoryPoint[] => {
-    const history = prov.balanceHistory || {};
     const points: BalanceHistoryPoint[] = [];
     const now = new Date();
+    // Provider-specific logs, oldest first.
+    const provLogs = balanceLogs
+      .filter(l => l.providerId === prov.id)
+      .sort((a, b) => new Date(a.changedAt).getTime() - new Date(b.changedAt).getTime());
     for (let i = 6; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const dateKey = d.toISOString().split('T')[0];
-      const entry = history[dateKey];
+      // Find the latest log entry on or before this day.
+      const entry = provLogs
+        .filter(l => (l.changedAt || '').slice(0, 10) <= dateKey)
+        .pop();
       if (entry) {
-        points.push({ date: dateKey, balance: entry.balance || 0 });
+        points.push({ date: dateKey, balance: entry.newBalance });
       } else if (points.length > 0) {
         // Carry forward last known balance
         points.push({ date: dateKey, balance: points[points.length - 1].balance });
+      } else if (provLogs.length > 0) {
+        // Future-dated entry — use the earliest known balance.
+        points.push({ date: dateKey, balance: provLogs[0].newBalance });
       }
     }
     return points;

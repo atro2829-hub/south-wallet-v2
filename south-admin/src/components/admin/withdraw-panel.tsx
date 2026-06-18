@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { ref, update, push, get } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
+import { supabaseAdmin } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
-import { formatNumber, currencySymbols, generateId, cn, formatDateAr, timeAgo } from '@/lib/utils';
+import { formatNumber, currencySymbols, cn, formatDateAr, timeAgo } from '@/lib/utils';
 import { notifyWithdrawStatus } from '@/lib/notifications';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -19,7 +18,7 @@ import { Search, CheckCircle, XCircle, ArrowUpCircle, Clock, DollarSign, Trendin
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function WithdrawPanel() {
-  const { adminUser, showToast, withdrawRequests, dataLoaded } = useAdminStore();
+  const { adminUser, showToast, withdrawRequests, allUsers, dataLoaded } = useAdminStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('pending');
   const [currencyFilter, setCurrencyFilter] = useState('all');
@@ -29,15 +28,25 @@ export default function WithdrawPanel() {
   const [notes, setNotes] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
+  // Map user_id → display_name so we can show a human-readable name in the list.
+  const userNamesById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const u of allUsers || []) {
+      if (u?.id) map[u.id] = u.display_name || u.phone || u.email || u.card_number || 'مستخدم';
+    }
+    return map;
+  }, [allUsers]);
+
   const filtered = useMemo(() => {
     return withdrawRequests.filter((w: any) => {
-      const ms = !search || (w.userName && w.userName.includes(search)) || (w.userId && w.userId.includes(search));
+      const userName = userNamesById[w.user_id] || '';
+      const ms = !search || userName.includes(search) || (w.user_id && w.user_id.includes(search));
       const mf = statusFilter === 'all' || w.status === statusFilter;
       const mc = currencyFilter === 'all' || w.currency === currencyFilter;
-      const md = !dateFilter || (w.createdAt && w.createdAt.startsWith(dateFilter));
+      const md = !dateFilter || (w.created_at && w.created_at.startsWith(dateFilter));
       return ms && mf && mc && md;
     });
-  }, [withdrawRequests, search, statusFilter, currencyFilter, dateFilter]);
+  }, [withdrawRequests, userNamesById, search, statusFilter, currencyFilter, dateFilter]);
 
   const stats = useMemo(() => ({
     total: withdrawRequests.length,
@@ -45,47 +54,98 @@ export default function WithdrawPanel() {
     approved: withdrawRequests.filter((w: any) => w.status === 'approved').length,
     rejected: withdrawRequests.filter((w: any) => w.status === 'rejected').length,
     totalAmount: withdrawRequests.filter((w: any) => w.status === 'approved').reduce((s: number, w: any) => s + (w.amount || 0), 0),
-    todayAmount: withdrawRequests.filter((w: any) => w.status === 'approved' && w.createdAt?.startsWith(new Date().toISOString().split('T')[0])).reduce((s: number, w: any) => s + (w.amount || 0), 0),
+    todayAmount: withdrawRequests.filter((w: any) => w.status === 'approved' && w.created_at?.startsWith(new Date().toISOString().split('T')[0])).reduce((s: number, w: any) => s + (w.amount || 0), 0),
   }), [withdrawRequests]);
+
+  // Map the camelCase balance key the legacy code expected ("balanceYER")
+  // to the snake_case column on the users table ("balance_yer").
+  const balanceColumnForCurrency = (currency: string): string => {
+    const c = (currency || 'YER').toUpperCase();
+    if (c === 'SAR') return 'balance_sar';
+    if (c === 'USD') return 'balance_usd';
+    return 'balance_yer';
+  };
 
   const handleApprove = async () => {
     if (!selected) return;
     try {
-      await update(ref(database, `withdrawRequests/${selected.id}`), {
-        status: 'approved', notes: notes || '', reviewedAt: new Date().toISOString(), reviewedBy: adminUser?.uid,
-      });
-      if (selected.userId && selected.amount) {
-        const balanceKey = `balance${selected.currency || 'YER'}`;
-        const userRef = ref(database, `users/${selected.userId}`);
-        const userSnap = await get(userRef);
-        const userData = userSnap.val();
-        if (userData) {
-          const current = userData[balanceKey] || 0;
-          const newBalance = Math.max(0, current - selected.amount);
-          await update(ref(database, `users/${selected.userId}`), { [balanceKey]: newBalance });
+      const nowIso = new Date().toISOString();
+      // 1) Update withdraw_requests row (snake_case columns).
+      const { error: updErr } = await supabaseAdmin
+        .from('withdraw_requests')
+        .update({
+          status: 'approved',
+          admin_notes: notes || '',
+          reviewed_at: nowIso,
+          reviewed_by: adminUser?.uid || null,
+          updated_at: nowIso,
+        })
+        .eq('id', selected.id);
+      if (updErr) console.warn('withdraw_requests update error:', updErr.message);
+
+      // 2) Deduct the user's balance (snake_case column on users table).
+      if (selected.user_id && selected.amount) {
+        const balanceCol = balanceColumnForCurrency(selected.currency || 'YER');
+        const { data: userData, error: userErr } = await supabaseAdmin
+          .from('users')
+          .select(`${balanceCol}`)
+          .eq('id', selected.user_id)
+          .maybeSingle();
+        if (!userErr && userData) {
+          const userRow = userData as Record<string, any>;
+          const current = Number(userRow[balanceCol] || 0);
+          const newBalance = Math.max(0, current - Number(selected.amount));
+          await supabaseAdmin
+            .from('users')
+            .update({ [balanceCol]: newBalance, updated_at: nowIso })
+            .eq('id', selected.user_id);
         }
       }
-      try { await notifyWithdrawStatus(selected.userId, selected.amount, selected.currency || 'YER', 'approved'); } catch {}
-      await push(ref(database, 'ownerSettings/activityLog'), {
-        id: generateId(), type: 'admin', action: 'قبول سحب',
-        details: `قبول سحب ${selected.amount} ${currencySymbols[selected.currency || 'YER']} من ${selected.userName}`,
-        adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
-      });
+      try { await notifyWithdrawStatus(selected.user_id, selected.amount, selected.currency || 'YER', 'approved'); } catch {}
+      // 3) Log to activity_log (snake_case columns).
+      try {
+        const userName = userNamesById[selected.user_id] || 'مستخدم';
+        await supabaseAdmin.from('activity_log').insert({
+          user_id: selected.user_id || null,
+          action: 'approve_withdraw',
+          resource_type: 'withdraw_request',
+          resource_id: selected.id,
+          details: {
+            type: 'admin',
+            action_text: 'قبول سحب',
+            description: `قبول سحب ${selected.amount} ${currencySymbols[selected.currency || 'YER']} من ${userName}`,
+            admin_id: adminUser?.uid || null,
+            admin_name: adminUser?.displayName || null,
+            timestamp: nowIso,
+          },
+        });
+      } catch (logErr) {
+        console.warn('activity_log insert failed (non-fatal):', logErr);
+      }
       showToast('تم قبول السحب وخصم الرصيد', 'success');
       setDetailOpen(false); setNotes('');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + (e?.message || ''), 'error'); }
   };
 
   const handleReject = async () => {
     if (!selected) return;
     try {
-      await update(ref(database, `withdrawRequests/${selected.id}`), {
-        status: 'rejected', notes: notes || '', reviewedAt: new Date().toISOString(), reviewedBy: adminUser?.uid,
-      });
-      try { await notifyWithdrawStatus(selected.userId, selected.amount, selected.currency || 'YER', 'rejected'); } catch {}
+      const nowIso = new Date().toISOString();
+      const { error: updErr } = await supabaseAdmin
+        .from('withdraw_requests')
+        .update({
+          status: 'rejected',
+          admin_notes: notes || '',
+          reviewed_at: nowIso,
+          reviewed_by: adminUser?.uid || null,
+          updated_at: nowIso,
+        })
+        .eq('id', selected.id);
+      if (updErr) console.warn('withdraw_requests update error:', updErr.message);
+      try { await notifyWithdrawStatus(selected.user_id, selected.amount, selected.currency || 'YER', 'rejected'); } catch {}
       showToast('تم رفض طلب السحب', 'success');
       setDetailOpen(false); setNotes('');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + (e?.message || ''), 'error'); }
   };
 
   const statusLabel: Record<string, string> = { pending: 'معلق', approved: 'مقبول', rejected: 'مرفوض' };
@@ -192,8 +252,8 @@ export default function WithdrawPanel() {
                         <ArrowUpCircle className={cn('w-5 h-5', w.status === 'pending' ? 'text-yellow-500' : w.status === 'approved' ? 'text-green-500' : 'text-red-500')} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{w.userName || 'مستخدم'}</p>
-                        <p className="text-xs text-muted-foreground">{w.createdAt ? timeAgo(w.createdAt) : '-'}</p>
+                        <p className="font-medium text-sm truncate">{userNamesById[w.user_id] || 'مستخدم'}</p>
+                        <p className="text-xs text-muted-foreground">{w.created_at ? timeAgo(w.created_at) : '-'}</p>
                       </div>
                     </div>
                     <div className="text-left shrink-0">
@@ -215,21 +275,21 @@ export default function WithdrawPanel() {
           {selected && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><Label className="text-muted-foreground">المستخدم</Label><p className="font-medium">{selected.userName || '-'}</p></div>
+                <div><Label className="text-muted-foreground">المستخدم</Label><p className="font-medium">{userNamesById[selected.user_id] || '-'}</p></div>
                 <div><Label className="text-muted-foreground">المبلغ</Label><p className="font-bold">{formatNumber(selected.amount)} {currencySymbols[selected.currency || 'YER']}</p></div>
                 <div><Label className="text-muted-foreground">الطريقة</Label><p className="font-medium">{selected.method === 'bank_transfer' ? 'تحويل بنكي' : selected.method === 'wallet' ? 'محفظة' : 'أخرى'}</p></div>
                 <div><Label className="text-muted-foreground">الحالة</Label><Badge className={statusColor[selected.status]}>{statusLabel[selected.status]}</Badge></div>
-                <div><Label className="text-muted-foreground">التاريخ</Label><p className="font-medium">{selected.createdAt ? formatDateAr(selected.createdAt) : '-'}</p></div>
-                {selected.bankName && <div><Label className="text-muted-foreground">البنك</Label><p className="font-medium">{selected.bankName}</p></div>}
-                {selected.accountNumber && <div><Label className="text-muted-foreground">رقم الحساب</Label><p className="font-medium" dir="ltr">{selected.accountNumber}</p></div>}
-                {selected.walletAddress && <div><Label className="text-muted-foreground">عنوان المحفظة</Label><p className="font-medium text-xs break-all" dir="ltr">{selected.walletAddress}</p></div>}
+                <div><Label className="text-muted-foreground">التاريخ</Label><p className="font-medium">{selected.created_at ? formatDateAr(selected.created_at) : '-'}</p></div>
+                {selected.bank_name && <div><Label className="text-muted-foreground">البنك</Label><p className="font-medium">{selected.bank_name}</p></div>}
+                {selected.bank_account && <div><Label className="text-muted-foreground">رقم الحساب</Label><p className="font-medium" dir="ltr">{selected.bank_account}</p></div>}
+                {selected.crypto_wallet_address && <div><Label className="text-muted-foreground">عنوان المحفظة</Label><p className="font-medium text-xs break-all" dir="ltr">{selected.crypto_wallet_address}</p></div>}
               </div>
 
-              {selected.proofImage && (
+              {selected.proof_image && (
                 <div>
                   <Label className="text-muted-foreground">صورة الإثبات</Label>
-                  <div className="mt-2 rounded-xl overflow-hidden border border-border cursor-pointer group relative" onClick={() => setPreviewImage(selected.proofImage)}>
-                    <img src={selected.proofImage} alt="proof" className="w-full max-h-60 object-contain bg-white" />
+                  <div className="mt-2 rounded-xl overflow-hidden border border-border cursor-pointer group relative" onClick={() => setPreviewImage(selected.proof_image)}>
+                    <img src={selected.proof_image} alt="proof" className="w-full max-h-60 object-contain bg-white" />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                       <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
                     </div>
@@ -237,7 +297,7 @@ export default function WithdrawPanel() {
                 </div>
               )}
 
-              {selected.notes && <div><Label className="text-muted-foreground">ملاحظات سابقة</Label><p className="text-sm mt-1 p-2 bg-muted/30 rounded-lg">{selected.notes}</p></div>}
+              {selected.admin_notes && <div><Label className="text-muted-foreground">ملاحظات سابقة</Label><p className="text-sm mt-1 p-2 bg-muted/30 rounded-lg">{selected.admin_notes}</p></div>}
 
               {selected.status === 'pending' && (
                 <>

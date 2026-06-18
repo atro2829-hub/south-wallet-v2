@@ -11,26 +11,26 @@ import {
   Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, supabaseAdmin } from '@/lib/supabase';
-// Firebase kept ONLY as a secondary broadcast channel for legacy clients.
-// The PRIMARY source of truth is the Supabase `maintenance` table — user apps subscribe to it.
-import { database } from '@/lib/db-compat';
-import { ref, get, set } from '@/lib/db-compat';
+import { supabaseAdmin } from '@/lib/supabase';
+// Maintenance settings live in the Supabase `maintenance` table.
+// `allow_admin_access` is persisted via app_config (key='maintenance_extras')
+// because the maintenance table itself doesn't have that column.
 
 interface MaintenanceRow {
   id: string;
   is_active: boolean;
   message: string;
   estimated_time: string;
-  allow_admin_access: boolean;
   activated_at: string | null;
-  activated_by: string;
-  updated_at: string;
+  activated_by: string | null;
 }
 
 const DEFAULT_MESSAGE = 'نحن نقوم بتحسين النظام. سنعود قريباً!';
 const DEFAULT_ESTIMATED = '30 دقيقة';
-const SINGLETON_ID = '00000000-0000-0000-0000-000000000001';
+// Use 'main' as the singleton id — matches what the user app reads
+// (`supabase.from('maintenance').select('*').eq('id', 'main').single()` in src/lib/supabase.ts).
+const SINGLETON_ID = 'main';
+const MAINTENANCE_EXTRAS_KEY = 'maintenance_extras';
 
 export default function MaintenancePanel() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -42,32 +42,30 @@ export default function MaintenancePanel() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Load current maintenance settings from Supabase (PRIMARY source of truth).
-  // Falls back to Firebase if the Supabase row doesn't exist yet.
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        // 1) Try Supabase first
-        const { data, error } = await supabase
+        // 1) Read the maintenance singleton row.
+        const { data, error } = await supabaseAdmin
           .from('maintenance')
           .select('*')
           .eq('id', SINGLETON_ID)
-          .maybeSingle();
+          .maybeSingle() as { data: MaintenanceRow | null; error: any };
 
         if (!error && data) {
           setMaintenanceMode(data.is_active === true);
           setMaintenanceMessage(data.message || DEFAULT_MESSAGE);
           setEstimatedTime(data.estimated_time || DEFAULT_ESTIMATED);
-          setAllowAdminAccess(data.allow_admin_access !== false);
-        } else {
-          // 2) Fall back to Firebase for backward compat
-          const snapshot = await get(ref(database, 'adminSettings/maintenance'));
-          if (snapshot.exists()) {
-            const fbData = snapshot.val();
-            setMaintenanceMode(fbData.active === true);
-            setMaintenanceMessage(fbData.message || DEFAULT_MESSAGE);
-            setEstimatedTime(fbData.estimatedTime || DEFAULT_ESTIMATED);
-            setAllowAdminAccess(fbData.allowAdminAccess !== false);
-          }
+        }
+        // 2) Read the allow_admin_access flag from app_config extras.
+        const { data: extrasRow, error: extrasErr } = await supabaseAdmin
+          .from('app_config')
+          .select('value')
+          .eq('key', MAINTENANCE_EXTRAS_KEY)
+          .maybeSingle();
+        if (!extrasErr && extrasRow?.value) {
+          const extras = extrasRow.value as Record<string, any>;
+          setAllowAdminAccess(extras.allowAdminAccess !== false);
         }
       } catch (error) {
         console.error('Error loading maintenance settings:', error);
@@ -87,36 +85,28 @@ export default function MaintenancePanel() {
         is_active: maintenanceMode,
         message: maintenanceMessage,
         estimated_time: estimatedTime,
-        allow_admin_access: allowAdminAccess,
         activated_at: maintenanceMode ? nowIso : null,
-        activated_by: 'admin',
-        updated_at: nowIso,
+        activated_by: null,
       };
 
-      // 1) Upsert to Supabase (PRIMARY) — use admin client to bypass RLS
+      // 1) Upsert to Supabase maintenance table (service role → bypasses RLS).
       const { error: supaErr } = await supabaseAdmin
         .from('maintenance')
         .upsert(maintenanceData, { onConflict: 'id' });
 
       if (supaErr) {
         console.error('Supabase maintenance upsert failed:', supaErr);
-        // Try anon client as fallback (in case RLS permits)
-        await supabase.from('maintenance').upsert(maintenanceData, { onConflict: 'id' });
       }
 
-      // 2) Mirror to Firebase Realtime Database (legacy broadcast channel)
-      try {
-        await set(ref(database, 'adminSettings/maintenance'), {
-          active: maintenanceMode,
-          message: maintenanceMessage,
-          estimatedTime: estimatedTime,
-          allowAdminAccess: allowAdminAccess,
-          updatedAt: nowIso,
-          updatedBy: 'admin',
-        });
-      } catch (fbErr) {
-        console.warn('Firebase mirror failed (non-fatal):', fbErr);
-      }
+      // 2) Persist allow_admin_access flag in app_config (extras blob).
+      const { error: extrasErr } = await supabaseAdmin
+        .from('app_config')
+        .upsert({
+          key: MAINTENANCE_EXTRAS_KEY,
+          value: { allowAdminAccess, updatedAt: nowIso, updatedBy: 'admin' },
+          updated_at: nowIso,
+        }, { onConflict: 'key' });
+      if (extrasErr) console.warn('Maintenance extras upsert warning:', extrasErr.message);
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
