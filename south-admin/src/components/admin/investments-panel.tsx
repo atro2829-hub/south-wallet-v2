@@ -394,7 +394,7 @@ export default function InvestmentsPanel() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: inv.status === 'active' ? 'rgba(34,197,94,0.1)' : inv.status === 'matured' ? 'rgba(59,130,246,0.1)' : 'rgba(239,68,68,0.1)' }}>
-                          {inv.status === 'active' ? <Clock className="w-5 h-5 text-green-500" /> : inv.status === 'matured' ? <CheckCircle className="w-5 h-5 text-blue-500" /> : <XCircle className="w-5 h-5 text-red-500" />}}
+                          {inv.status === 'active' ? <Clock className="w-5 h-5 text-green-500" /> : inv.status === 'matured' ? <CheckCircle className="w-5 h-5 text-blue-500" /> : <XCircle className="w-5 h-5 text-red-500" />}
                         </div>
                         <div>
                           <p className="font-medium text-sm">{inv.userName}</p>
