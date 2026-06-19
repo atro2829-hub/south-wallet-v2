@@ -127,22 +127,68 @@ export default function InvestmentScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
 
-  // Fetch investment plans from Firebase adminSettings/investmentPlans
+  // Fetch investment plans from Supabase investment_plans table.
+  // FIX: previously read from `adminSettings/investmentPlans` (Firebase path
+  // collapsed to a single app_config row → only one plan was ever visible).
+  // Now reads directly from the dedicated investment_plans table that the
+  // admin investments-panel.tsx writes to.
   useEffect(() => {
-    const plansRef = ref(database, 'adminSettings/investmentPlans');
-    const unsubscribe = onValue(plansRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        // Firebase may store arrays as objects with numeric keys
-        const plansList: FirebaseInvestmentPlan[] = Array.isArray(data)
-          ? data.filter(Boolean).map((p, i) => ({ ...p, id: p.id || String(i) }))
-          : Object.entries(data).map(([id, val]: [string, any]) => ({ ...val, id }));
-        setPlans(plansList.filter(p => p.isActive));
-      } else {
-        setPlans([]);
+    let cancelled = false;
+    let channel: any = null;
+
+    const loadPlans = async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        const { data, error } = await supabase
+          .from('investment_plans')
+          .select('*')
+          .eq('is_active', true)
+          .order('min_amount', { ascending: true });
+        if (error) {
+          console.warn('[investment-screen] plans fetch error:', error.message);
+          if (!cancelled) setPlans([]);
+          return;
+        }
+        if (cancelled) return;
+        const plansList: FirebaseInvestmentPlan[] = (data || []).map((p: any) => ({
+          id: p.id,
+          name: p.name || p.name_en || 'خطة',
+          type: p.duration_days <= 7 ? 'daily' : p.duration_days <= 30 ? 'monthly' : p.duration_days <= 90 ? 'quarterly' : 'weekly',
+          durationDays: p.duration_days || 30,
+          minAmount: Number(p.min_amount) || 0,
+          maxAmount: Number(p.max_amount) || 0,
+          currency: p.currency || 'USDT',
+          profitRate: Number(p.profit_rate) || 0,
+          isActive: p.is_active !== false,
+        }));
+        setPlans(plansList);
+      } catch (e) {
+        console.warn('[investment-screen] plans load error:', e);
+        if (!cancelled) setPlans([]);
       }
-    });
-    return () => unsubscribe();
+    };
+
+    loadPlans();
+
+    // Subscribe to realtime changes so admin edits appear instantly
+    (async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        channel = supabase
+          .channel(`investment-plans-${Date.now()}`)
+          .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'investment_plans' },
+            () => loadPlans())
+          .subscribe();
+      } catch {}
+    })();
+
+    return () => {
+      cancelled = true;
+      if (channel) {
+        try { (async () => { const { supabase } = await import('@/lib/supabase'); supabase.removeChannel(channel); })(); } catch {}
+      }
+    };
   }, []);
 
   // Fetch user investments directly from Supabase (the db-compat path

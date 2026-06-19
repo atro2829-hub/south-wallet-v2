@@ -1,7 +1,5 @@
 'use client';
 
-'use client';
-
 import { useState, useEffect, useCallback, Component, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users, Zap, Trophy, Flame } from 'lucide-react';
@@ -90,7 +88,7 @@ interface OrderResult {
 }
 
 // ===== Main Games Screen =====
-export function GamesScreen() {
+export default function GamesScreen() {
   return (
     <GamesErrorBoundary>
       <GamesScreenInner />

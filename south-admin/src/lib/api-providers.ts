@@ -68,6 +68,7 @@ export interface ApiGame {
   name: string;
   name_ar?: string;
   image_url: string;
+  image_url_cached?: string;  // Supabase Storage URL (faster, offline-friendly)
   banner_url?: string;
   description?: string;
   provider_id: string;
@@ -280,6 +281,94 @@ async function apiRequest<T>(
     throw err;
   }
   return data as T;
+}
+
+// ===== Image Caching to Supabase Storage =====
+// Downloads images from G2Bulk CDN and stores them in Supabase Storage
+// so the user app loads them faster (and works offline after first sync).
+// The cached URL is stored in the `image_url_cached` column.
+
+const SUPABASE_GAMES_BUCKET = 'games';
+const SUPABASE_PRODUCTS_BUCKET = 'products';
+const G2BULK_CDN_BASE = 'https://api.g2bulk.com';
+
+async function cacheImageToStorage(
+  externalUrl: string,
+  bucket: string,
+  filePath: string
+): Promise<string | null> {
+  if (!externalUrl) return null;
+  // If the URL is already a Supabase Storage URL, no need to re-cache
+  if (externalUrl.includes('supabase.co/storage/v1/object/public/')) return externalUrl;
+
+  try {
+    const fullUrl = externalUrl.startsWith('http')
+      ? externalUrl
+      : `${G2BULK_CDN_BASE}${externalUrl.startsWith('/') ? '' : '/'}${externalUrl}`;
+
+    const response = await fetch(fullUrl);
+    if (!response.ok) {
+      console.warn(`[cacheImage] fetch failed for ${fullUrl}: HTTP ${response.status}`);
+      return null;
+    }
+    const blob = await response.blob();
+    if (blob.size === 0) return null;
+
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(filePath, blob, {
+        upsert: true,
+        contentType: blob.type || 'image/png',
+      });
+
+    if (error) {
+      console.warn(`[cacheImage] upload failed for ${filePath}:`, error.message);
+      return null;
+    }
+
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    return pub.publicUrl;
+  } catch (e) {
+    console.warn(`[cacheImage] exception for ${externalUrl}:`, e);
+    return null;
+  }
+}
+
+/**
+ * Batch-cache images for synced games. Limits concurrency to 5 parallel
+ * downloads to avoid overwhelming either G2Bulk CDN or Supabase Storage.
+ * Returns the number of images successfully cached.
+ */
+async function batchCacheGameImages(
+  provider: ApiProvider,
+  games: ApiGame[]
+): Promise<number> {
+  let cached = 0;
+  const CONCURRENCY = 5;
+  const queue = [...games];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const game = queue.shift();
+      if (!game) break;
+      if (!game.image_url) continue;
+
+      const filePath = `${provider.id}/${game.code}.png`;
+      const cachedUrl = await cacheImageToStorage(game.image_url, SUPABASE_GAMES_BUCKET, filePath);
+      if (cachedUrl) {
+        // Update the row with the cached URL
+        await supabase
+          .from('api_games')
+          .update({ image_url_cached: cachedUrl, updated_at: new Date().toISOString() })
+          .eq('api_provider_id', provider.id)
+          .eq('game_code', game.code);
+        cached++;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  return cached;
 }
 
 // ===== G2Bulk Specific Functions =====
@@ -591,6 +680,16 @@ export async function syncG2BulkGames(provider: ApiProvider): Promise<ApiGame[]>
     .update({ last_sync_at: new Date().toISOString() })
     .eq('id', provider.id);
 
+  // Cache game images to Supabase Storage in the BACKGROUND.
+  // Don't await — let the sync return immediately so the admin sees
+  // the games list right away. The user app will fall back to the
+  // original CDN URL until caching completes.
+  batchCacheGameImages(provider, games).then((count) => {
+    console.log(`[sync] Cached ${count}/${games.length} game images to Supabase Storage`);
+  }).catch((e) => {
+    console.warn('[sync] Game image caching failed:', e);
+  });
+
   return games;
 }
 
@@ -833,8 +932,11 @@ export async function getCachedProviderData(providerId: string): Promise<{
     code: g.game_code,
     name: g.name,
     name_ar: g.name_ar || g.name,
-    image_url: g.image_url || '',
-    banner_url: g.banner_url || g.image_url || '',
+    // Prefer the cached Supabase Storage URL (faster, works offline);
+    // fall back to the original G2Bulk CDN URL if caching hasn't completed.
+    image_url: g.image_url_cached || g.image_url || '',
+    image_url_cached: g.image_url_cached || '',
+    banner_url: g.banner_url || g.image_url_cached || g.image_url || '',
     description: g.description || '',
     provider_id: providerId,
     enabled: g.is_active,

@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ref, onValue, push, update, remove, set, get } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
 import { useAdminStore } from '@/lib/store';
 import { formatNumber, currencySymbols, generateId } from '@/lib/utils';
+import { supabaseAdmin } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -70,34 +69,89 @@ export default function InvestmentsPanel() {
   const [planProfitRate, setPlanProfitRate] = useState('');
   const [planIsActive, setPlanIsActive] = useState(true);
 
+  // FIX: read investment_plans and investments directly from Supabase tables.
+  // Previously used `adminSettings/investmentPlans` (Firebase path that collapsed
+  // to a single app_config row → only one plan was visible) and
+  // `users/{uid}/investments` (extractField on a non-existent column → empty).
   useEffect(() => {
-    const plansRef = ref(database, 'adminSettings/investmentPlans');
-    const unsub1 = onValue(plansRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: InvestmentPlan[] = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val }));
-      setPlans(list);
-    });
+    let plansChannel: any = null;
+    let investmentsChannel: any = null;
 
-    const autoRef = ref(database, 'adminSettings/investmentAutoCompletion');
-    const unsub2 = onValue(autoRef, (snapshot) => {
-      setAutoCompletion(snapshot.val() !== false);
-    });
+    const loadPlans = async () => {
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('investment_plans')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        const list: InvestmentPlan[] = (data || []).map((p: any) => ({
+          id: p.id,
+          name: p.name || p.name_en || 'خطة',
+          type: p.duration_days <= 7 ? 'daily' : p.duration_days <= 30 ? 'monthly' : p.duration_days <= 90 ? 'quarterly' : 'weekly',
+          durationDays: p.duration_days || 30,
+          minAmount: Number(p.min_amount) || 0,
+          maxAmount: Number(p.max_amount) || 0,
+          currency: p.currency || 'USDT',
+          profitRate: Number(p.profit_rate) || 0,
+          isActive: p.is_active !== false,
+          createdAt: p.created_at || new Date().toISOString(),
+        }));
+        setPlans(list);
+      } catch (e: any) {
+        console.error('[investments-panel] plans load error:', e);
+        showToast('فشل تحميل الخطط: ' + e.message, 'error');
+      }
+    };
 
-    const usersRef = ref(database, 'users');
-    const unsub3 = onValue(usersRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const investList: UserInvestment[] = [];
-      Object.entries(data).forEach(([uid, userData]: [string, any]) => {
-        const userInvestments = userData.investments || {};
-        Object.entries(userInvestments).forEach(([investId, investData]: [string, any]) => {
-          investList.push({ id: investId, uid, userName: userData.name || userData.firstName || userData.email || uid, ...investData });
-        });
-      });
-      setInvestments(investList);
-      setLoading(false);
-    });
+    const loadInvestments = async () => {
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('investments')
+          .select('*, users!inner(name, email, phone)')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (error) throw error;
+        const list: UserInvestment[] = (data || []).map((inv: any) => ({
+          id: inv.id,
+          uid: inv.user_id,
+          userName: inv.users?.name || inv.users?.email || inv.users?.phone || inv.user_id,
+          planId: inv.plan_id || '',
+          planName: inv.plan_name || '',
+          amount: Number(inv.amount) || 0,
+          currency: inv.currency || 'USDT',
+          profitRate: Number(inv.daily_return) || 0,
+          status: inv.status || 'active',
+          startDate: inv.starts_at || inv.created_at,
+          endDate: inv.ends_at || '',
+          totalProfit: Number(inv.total_return) || 0,
+          earnedProfit: Number(inv.earned_return) || 0,
+        }));
+        setInvestments(list);
+      } catch (e: any) {
+        console.error('[investments-panel] investments load error:', e);
+        setInvestments([]);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    return () => { unsub1(); unsub2(); unsub3(); };
+    loadPlans();
+    loadInvestments();
+
+    // Subscribe to realtime changes
+    plansChannel = supabaseAdmin
+      .channel(`investment-plans-admin-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investment_plans' }, () => loadPlans())
+      .subscribe();
+    investmentsChannel = supabaseAdmin
+      .channel(`investments-admin-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => loadInvestments())
+      .subscribe();
+
+    return () => {
+      try { supabaseAdmin.removeChannel(plansChannel); } catch {}
+      try { supabaseAdmin.removeChannel(investmentsChannel); } catch {}
+    };
   }, []);
 
   const resetForm = () => {
@@ -109,41 +163,65 @@ export default function InvestmentsPanel() {
   const handleSavePlan = async () => {
     if (!planName || !planProfitRate) { showToast('يرجى ملء جميع الحقول المطلوبة', 'error'); return; }
     try {
-      const data: InvestmentPlan = {
-        name: planName, type: planType, durationDays: parseInt(planDuration) || 30,
-        minAmount: parseFloat(planMinAmount) || 0, maxAmount: parseFloat(planMaxAmount) || 0,
-        currency: planCurrency, profitRate: parseFloat(planProfitRate) || 0,
-        isActive: planIsActive, createdAt: editing?.createdAt || new Date().toISOString(),
+      const payload = {
+        name: planName,
+        name_en: planName,
+        description: '',
+        min_amount: parseFloat(planMinAmount) || 0,
+        max_amount: parseFloat(planMaxAmount) || 0,
+        duration_days: parseInt(planDuration) || 30,
+        profit_rate: parseFloat(planProfitRate) || 0,
+        currency: planCurrency,
+        is_active: planIsActive,
+        updated_at: new Date().toISOString(),
       };
       if (editing?.id) {
-        await update(ref(database, `adminSettings/investmentPlans/${editing.id}`), data);
+        const { error } = await supabaseAdmin
+          .from('investment_plans')
+          .update(payload)
+          .eq('id', editing.id);
+        if (error) throw error;
         showToast('تم تحديث خطة الاستثمار', 'success');
       } else {
-        await push(ref(database, 'adminSettings/investmentPlans'), data);
+        const { error } = await supabaseAdmin
+          .from('investment_plans')
+          .insert({ ...payload, created_at: new Date().toISOString() });
+        if (error) throw error;
         showToast('تم إضافة خطة الاستثمار', 'success');
       }
       setDialog(false); resetForm();
-    } catch (e) { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const handleDeletePlan = async (id: string) => {
-    try { await remove(ref(database, `adminSettings/investmentPlans/${id}`)); showToast('تم حذف خطة الاستثمار', 'success'); }
-    catch (e) { showToast('حدث خطأ', 'error'); }
+    try {
+      const { error } = await supabaseAdmin.from('investment_plans').delete().eq('id', id);
+      if (error) throw error;
+      showToast('تم حذف خطة الاستثمار', 'success');
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const handleToggleAutoCompletion = async (value: boolean) => {
     try {
-      await set(ref(database, 'adminSettings/investmentAutoCompletion'), value);
+      // Store in app_config as a JSON blob
+      const { error } = await supabaseAdmin
+        .from('app_config')
+        .upsert({ key: 'investmentAutoCompletion', value: { enabled: value }, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+      if (error) throw error;
       setAutoCompletion(value);
       showToast(value ? 'تم تفعيل الإكمال التلقائي' : 'تم تعطيل الإكمال التلقائي', 'success');
-    } catch (e) { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const handleCompleteInvestment = async () => {
     const inv = confirmDialog.investment;
     if (!inv?.uid || !inv?.id) return;
     try {
-      await update(ref(database, `users/${inv.uid}/investments/${inv.id}`), { status: 'completed', completedAt: new Date().toISOString() });
+      const { error } = await supabaseAdmin
+        .from('investments')
+        .update({ status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', inv.id);
+      if (error) throw error;
       // Send FCM push notification + in-app notification
       try {
         await sendNotificationToUser(inv.uid, {
@@ -155,25 +233,37 @@ export default function InvestmentsPanel() {
       } catch {}
       showToast('تم إكمال الاستثمار', 'success');
       setConfirmDialog({ type: 'complete', investment: null });
-    } catch (e) { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const handleCancelInvestment = async () => {
     const inv = confirmDialog.investment;
     if (!inv?.uid || !inv?.id) return;
     try {
-      await update(ref(database, `users/${inv.uid}/investments/${inv.id}`), { status: 'cancelled', cancelledAt: new Date().toISOString() });
-      // Refund the investment amount
+      const { error } = await supabaseAdmin
+        .from('investments')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', inv.id);
+      if (error) throw error;
+
+      // Refund the investment amount via atomic update_user_balance RPC
       if (inv.amount) {
-        const balanceKey = `balance${inv.currency || 'YER'}`;
-        const userRef = ref(database, `users/${inv.uid}`);
-        const userSnap = await get(userRef);
-        const userData = userSnap.val();
-        if (userData) {
-          const current = userData[balanceKey] || 0;
-          await update(ref(database, `users/${inv.uid}`), { [balanceKey]: current + inv.amount });
+        const cur = (inv.currency || 'YER').toUpperCase();
+        const currencyField = cur === 'YER' ? 'balance_yer' : cur === 'SAR' ? 'balance_sar' : 'balance_usd';
+        const { error: refundErr } = await supabaseAdmin
+          .from('users')
+          .update({ [currencyField]: supabaseAdmin.rpc('update_user_balance', {
+            p_user_id: inv.uid, p_currency: cur, p_amount: inv.amount, p_operation: 'add'
+          }) })
+          .eq('id', inv.uid);
+        // Fallback: direct increment if RPC didn't work
+        if (refundErr) {
+          const { data: u } = await supabaseAdmin.from('users').select(currencyField).eq('id', inv.uid).maybeSingle();
+          const currentBalance = Number((u as any)?.[currencyField]) || 0;
+          await supabaseAdmin.from('users').update({ [currencyField]: currentBalance + inv.amount }).eq('id', inv.uid);
         }
       }
+
       // Send FCM push notification + in-app notification
       try {
         await sendNotificationToUser(inv.uid, {
@@ -185,7 +275,7 @@ export default function InvestmentsPanel() {
       } catch {}
       showToast('تم إلغاء الاستثمار واسترداد المبلغ', 'success');
       setConfirmDialog({ type: 'cancel', investment: null });
-    } catch (e) { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const filteredInvestments = investments.filter((inv) => {
