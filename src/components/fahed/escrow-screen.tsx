@@ -106,24 +106,85 @@ export default function EscrowScreen() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch user escrows from Firebase
+  // Fetch user escrows from Supabase escrow_transactions table.
+  // FIX: previously read from `users/{uid}/escrows` (non-existent column via
+  // db-compat extractField) → always returned empty.
   useEffect(() => {
     if (!user?.id) return;
-    const escrowRef = ref(database, `users/${user.id}/escrows`);
-    const listener = onValue(escrowRef, (snapshot) => {
-      setIsLoading(false);
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const allEscrows = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val })) as EscrowTransaction[];
-        // Sort by creation date, newest first
-        allEscrows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setEscrows(allEscrows);
-      } else {
-        setEscrows([]);
+    const userId = user.userId || user.id;
+    let unsubscribe: (() => void) | null = null;
+
+    (async () => {
+      try {
+        const { supabase } = await import('@/lib/supabase');
+        // Fetch escrows where user is buyer OR seller
+        const { data, error } = await supabase
+          .from('escrow_transactions')
+          .select('*')
+          .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+          .order('created_at', { ascending: false });
+        if (error) {
+          console.error('[escrow] fetch error:', error);
+          setEscrows([]);
+        } else {
+          const allEscrows = (data || []).map((row: any) => ({
+            id: row.id,
+            buyerId: row.buyer_id,
+            sellerId: row.seller_id,
+            amount: Number(row.amount) || 0,
+            currency: row.currency || 'USD',
+            description: row.description || '',
+            status: row.status || 'pending',
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            ...row,
+          })) as EscrowTransaction[];
+          setEscrows(allEscrows);
+        }
+        setIsLoading(false);
+
+        // Subscribe to real-time updates
+        const channel = supabase
+          .channel(`escrow-user-${userId}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'escrow_transactions' },
+            () => {
+              // Refetch on any change
+              supabase
+                .from('escrow_transactions')
+                .select('*')
+                .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+                .order('created_at', { ascending: false })
+                .then(({ data: newData }) => {
+                  if (newData) {
+                    const mapped = newData.map((row: any) => ({
+                      id: row.id,
+                      buyerId: row.buyer_id,
+                      sellerId: row.seller_id,
+                      amount: Number(row.amount) || 0,
+                      currency: row.currency || 'USD',
+                      description: row.description || '',
+                      status: row.status || 'pending',
+                      createdAt: row.created_at,
+                      updatedAt: row.updated_at,
+                      ...row,
+                    })) as EscrowTransaction[];
+                    setEscrows(mapped);
+                  }
+                });
+            }
+          )
+          .subscribe();
+        unsubscribe = () => { try { supabase.removeChannel(channel); } catch {} };
+      } catch (e) {
+        console.error('[escrow] init error:', e);
+        setIsLoading(false);
       }
-    });
-    return () => off(escrowRef);
-  }, [user?.id]);
+    })();
+
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [user?.id, user?.userId]);
 
   const activeEscrows = escrows.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
   const historyEscrows = escrows.filter(e => e.status === 'completed' || e.status === 'cancelled');

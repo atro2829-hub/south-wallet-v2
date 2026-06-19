@@ -2,11 +2,13 @@ name: Build Android Apps
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/g2bulk-integration, develop]
     paths-ignore:
       - '.gitignore'
       - 'README.md'
       - 'docs/'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       build_type:

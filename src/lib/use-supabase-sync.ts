@@ -45,6 +45,7 @@ function mapDbUserToStore(dbUser: DbUser, firebaseUid: string) {
     avatar: dbUser.avatar_url || '',
     role: (dbUser.role === 'agent' ? 'user' : dbUser.role) as 'user' | 'admin' | 'owner',
     userId: dbUser.id, // Supabase UUID stored here for reference
+    displayId: dbUser.display_id || '', // 6-digit user-facing account number
     kycStatus: dbUser.kyc_status || 'pending',
     isBlocked: dbUser.is_blocked || false,
     balanceYER: dbUser.balance_yer || 0,

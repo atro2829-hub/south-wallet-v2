@@ -18,6 +18,7 @@ interface User {
   avatar: string;
   role: 'user' | 'admin' | 'owner';
   userId: string;
+  displayId?: string; // 6-digit user-facing account number (from users.display_id)
   kycStatus: 'pending' | 'submitted' | 'verified' | 'rejected';
   isBlocked: boolean;
   balanceYER: number;

@@ -52,6 +52,7 @@ export interface DbUser {
   third_name: string;
   family_name: string;
   display_name: string;
+  display_id?: string; // 6-digit user-facing account number
   balance_yer: number;
   balance_sar: number;
   balance_usd: number;

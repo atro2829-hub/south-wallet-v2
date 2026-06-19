@@ -257,7 +257,7 @@ export default function AccountScreen() {
   };
 
   const handleShareProfile = () => {
-    const text = `📱 حسابي في محفظة الجنوب\n🆔 رقم الحساب: ${user?.userId || ''}\n👤 الاسم: ${user?.name || ''}`;
+    const text = `📱 حسابي في محفظة الجنوب\n🆔 رقم الحساب: ${user?.displayId || user?.userId || ''}\n👤 الاسم: ${user?.name || ''}`;
     if (navigator.share) {
       navigator.share({ text }).catch(() => {
         navigator.clipboard?.writeText(text);
@@ -337,7 +337,7 @@ export default function AccountScreen() {
               <div className="flex items-center gap-2 mt-0.5">
                 <CreditCard size={12} strokeWidth={1.5} color="#5C1A1B" />
                 <span className="text-sm font-medium" style={{ color: '#5C1A1B' }} dir="ltr">
-                  {user?.userId || '------'}
+                  {user?.displayId || user?.userId || '------'}
                 </span>
               </div>
             </div>
@@ -501,7 +501,7 @@ export default function AccountScreen() {
                     <div className="flex items-center gap-1.5">
                       <CreditCard size={12} color="rgba(255,255,255,0.7)" />
                       <span className="text-white/80 text-xs font-mono" dir="ltr">
-                        {user?.userId || '------'}
+                        {user?.displayId || user?.userId || '------'}
                       </span>
                     </div>
                     {user?.phone && (
@@ -522,7 +522,7 @@ export default function AccountScreen() {
                     style={{ background: '#FFFFFF' }}
                   >
                     <QRCodeSVG
-                      value={`FAHED:RECEIVE:${user?.userId || ''}:NAME:${encodeURIComponent(user?.name || '')}:PHONE:${user?.phone || ''}`}
+                      value={`FAHED:RECEIVE:${user?.displayId || user?.userId || ''}:NAME:${encodeURIComponent(user?.name || '')}:PHONE:${user?.phone || ''}`}
                       size={96}
                       level="M"
                       bgColor="#FFFFFF"
@@ -683,11 +683,11 @@ export default function AccountScreen() {
             >
               <span className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>كود الدعوة:</span>
               <span className="flex-1 text-sm font-mono font-bold text-center" style={{ color: '#5C1A1B' }} dir="ltr">
-                {user?.userId || '------'}
+                {user?.displayId || user?.userId || '------'}
               </span>
               <button
                 onClick={() => {
-                  navigator.clipboard?.writeText(user?.userId || '');
+                  navigator.clipboard?.writeText(user?.displayId || user?.userId || '');
                   setCopiedReferral(true);
                   setTimeout(() => setCopiedReferral(false), 2000);
                 }}
@@ -702,7 +702,7 @@ export default function AccountScreen() {
             <div className="flex gap-2">
               <button
                 onClick={() => {
-                  const text = `🎁 استخدم كود الدعوة ${user?.userId || ''} في تطبيق محفظة الجنوب واحصل على مكافأة!`;
+                  const text = `🎁 استخدم كود الدعوة ${user?.displayId || user?.userId || ''} في تطبيق محفظة الجنوب واحصل على مكافأة!`;
                   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
                   window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
                 }}
@@ -714,7 +714,7 @@ export default function AccountScreen() {
               </button>
               <button
                 onClick={() => {
-                  const text = `🎁 استخدم كود الدعوة ${user?.userId || ''} في تطبيق محفظة الجنوب واحصل على مكافأة!`;
+                  const text = `🎁 استخدم كود الدعوة ${user?.displayId || user?.userId || ''} في تطبيق محفظة الجنوب واحصل على مكافأة!`;
                   navigator.share?.({ text }).catch(() => {
                     navigator.clipboard?.writeText(text);
                   });

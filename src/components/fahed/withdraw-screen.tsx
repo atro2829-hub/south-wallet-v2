@@ -2,12 +2,11 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ref, push, set } from '@/lib/db-compat';
-import { database } from '@/lib/db-compat';
 import { useStore } from '@/lib/store';
 import { formatBalance, currencyNames } from '@/lib/utils';
 import { ArrowRight, ArrowUpFromLine, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabaseService } from '@/lib/supabase';
 
 export function WithdrawScreen() {
   const { user, navigateBack } = useStore();
@@ -30,22 +29,22 @@ export function WithdrawScreen() {
     }
     setSubmitting(true);
     try {
-      const orderRef = push(ref(database, `orders/${user.id}`));
-      await set(orderRef, {
-        type: 'withdraw',
+      // FIX: write to withdraw_requests table (read by admin withdraw-panel.tsx)
+      // instead of orders table which the admin never reads for withdrawals.
+      await supabaseService.createWithdrawRequest({
+        user_id: user.userId || user.id,
         amount: withdrawAmount,
         currency,
-        destination,
+        method: destination.toLowerCase().includes('usdt') ? 'crypto' : 'bank',
+        receipt_data: { destination, requested_at: new Date().toISOString() },
         status: 'pending',
-        createdAt: new Date().toISOString(),
-        userId: user.id,
       });
       toast.success('تم إرسال طلب السحب بنجاح');
       setAmount('');
       setDestination('');
     } catch (error) {
       console.error('Withdraw error:', error);
-      toast.error('حدث خطأ في إرسال الطلب');
+      toast.error('حدث خطأ في إرسال الطلب: ' + (error as Error).message);
     } finally {
       setSubmitting(false);
     }

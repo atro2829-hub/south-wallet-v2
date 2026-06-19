@@ -566,6 +566,8 @@ export default function ApiProvidersPanel() {
   };
 
   // ─── Toggle Active ─────────────────────────────────────────────────
+  // When a provider is paused, optionally broadcast a push notification to all
+  // users so they know the service is temporarily unavailable.
   const handleToggleActive = async (providerId: string, active: boolean) => {
     try {
       // Update is_active on the Supabase api_providers row (service role).
@@ -574,7 +576,59 @@ export default function ApiProvidersPanel() {
         .update({ is_active: active, updated_at: new Date().toISOString() })
         .eq('id', providerId);
       if (sbErr) console.warn('[handleToggleActive] Supabase update warning:', sbErr.message);
-      showToast(active ? 'تم تفعيل المزود' : 'تم تعطيل المزود', 'success');
+
+      // Get provider name for the notification message
+      const { data: provRow } = await supabaseAdmin
+        .from('api_providers')
+        .select('name')
+        .eq('id', providerId)
+        .maybeSingle();
+      const provName = provRow?.name || providerId;
+
+      // When pausing (active=false), broadcast a push notification to ALL users
+      // so they know the service is temporarily down. This matches the user's
+      // requirement: "إرسال اشعار push للجميع مباشرة ان تم توقف الخادم لبعض الوقت"
+      if (!active) {
+        try {
+          const { sendFCMDirect } = await import('@/lib/fcm-sender');
+          const { data: users } = await supabaseAdmin
+            .from('users')
+            .select('id, fcm_token')
+            .not('fcm_token', 'is', null)
+            .neq('fcm_token', '');
+          const tokens = (users || []).map((u: any) => u.fcm_token).filter(Boolean);
+
+          if (tokens.length > 0) {
+            const title = 'إيقاف مؤقت للخدمة';
+            const body = `خدمة ${provName} متوقفة مؤقتاً. نعتذر عن الإزعاج ونعمل على استئنافها قريباً.`;
+            // Send push (fire-and-forget, don't block the toggle)
+            sendFCMDirect(tokens, title, body, 'security').catch((e) =>
+              console.warn('[broadcast] FCM send failed:', e)
+            );
+            // Also insert in-app notifications for all users (batched)
+            const notifRows = (users || []).map((u: any) => ({
+              user_id: u.id,
+              title,
+              body,
+              type: 'security',
+              is_read: false,
+              created_at: new Date().toISOString(),
+            }));
+            for (let i = 0; i < notifRows.length; i += 100) {
+              await supabaseAdmin.from('notifications').insert(notifRows.slice(i, i + 100));
+            }
+            console.log(`[broadcast] Sent pause notification to ${tokens.length} users`);
+          }
+        } catch (broadcastErr) {
+          console.warn('[broadcast] Failed to send pause notification:', broadcastErr);
+          // Don't fail the toggle if broadcast fails
+        }
+      }
+
+      showToast(
+        active ? 'تم تفعيل المزود' : `تم تعطيل المزود ${provName} وإرسال إشعار للمستخدمين`,
+        'success'
+      );
     } catch (e: any) {
       showToast('حدث خطأ: ' + (e?.message || ''), 'error');
     }

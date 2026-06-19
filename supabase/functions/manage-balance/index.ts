@@ -21,63 +21,30 @@ serve(async (req) => {
 
     switch (action) {
       case 'transfer': {
-        const { from_user_id, to_user_id, amount, currency = 'YER', fee = 0, note = '' } = data
+        const { from_user_id, to_user_id, amount, currency = 'YER', fee = 0, note = '', description = '' } = data
 
         if (from_user_id === to_user_id) throw new Error('لا يمكنك التحويل لنفسك')
 
-        const cur = currency.toLowerCase()
+        // FIX: use the atomic transfer_money() PL/pgSQL function instead of
+        // read-then-write (which had a race condition — two concurrent transfers
+        // could both pass the balance check and overdraft).
+        const { data: txnId, error: rpcErr } = await supabase.rpc('transfer_money', {
+          p_from_user_id: from_user_id,
+          p_to_user_id: to_user_id,
+          p_amount: Number(amount),
+          p_currency: currency,
+          p_fee: Number(fee),
+          p_description: description || note || 'تحويل بين المستخدمين',
+        })
+        if (rpcErr) throw rpcErr
 
-        // Get sender balance
-        const { data: sender, error: senderErr } = await supabase
-          .from('users')
-          .select(`balance_${cur}`)
-          .eq('id', from_user_id)
-          .maybeSingle()
-        if (senderErr) throw senderErr
-        if (!sender) throw new Error('المرسل غير موجود')
-
-        const senderBalance = Number((sender as any)[`balance_${cur}`]) || 0
-        const total = Number(amount) + Number(fee)
-
-        if (senderBalance < total) throw new Error('الرصيد غير كافي')
-
-        // Get receiver
-        const { data: receiver, error: recvErr } = await supabase
-          .from('users')
-          .select(`id, balance_${cur}`)
-          .eq('id', to_user_id)
-          .maybeSingle()
-        if (recvErr) throw recvErr
-        if (!receiver) throw new Error('المستلم غير موجود')
-
-        const receiverBalance = Number((receiver as any)[`balance_${cur}`]) || 0
-
-        // Create transaction record
-        const { data: txn, error: txnErr } = await supabase
+        // Fetch the created transaction row
+        const { data: txn, error: txnFetchErr } = await supabase
           .from('transactions')
-          .insert({
-            from_user_id,
-            to_user_id,
-            amount: Number(amount),
-            fee: Number(fee),
-            currency,
-            type: 'transfer',
-            status: 'completed',
-            note,
-          })
-          .select()
-          .single()
-        if (txnErr) throw txnErr
-
-        // Deduct from sender
-        await supabase.from('users')
-          .update({ [`balance_${cur}`]: senderBalance - total })
-          .eq('id', from_user_id)
-
-        // Add to receiver
-        await supabase.from('users')
-          .update({ [`balance_${cur}`]: receiverBalance + Number(amount) })
-          .eq('id', to_user_id)
+          .select('*')
+          .eq('id', txnId)
+          .maybeSingle()
+        if (txnFetchErr) console.warn('[transfer] could not fetch txn:', txnFetchErr.message)
 
         return new Response(JSON.stringify({
           success: true,

@@ -203,6 +203,223 @@ function parsePath(path: string): { table: string; filter?: { column: string; va
   if (parts[0] === 'maintenance') {
     return { table: 'maintenance', raw: path };
   }
+
+  // ===== NEW PATH MAPPINGS (added 2026-06-19) =====
+  // These unblock 25+ admin panels and user screens that were previously
+  // routing to __unknown__ and silently no-oping.
+
+  // subSections (root) — used by sub-sections-panel.tsx
+  if (parts[0] === 'subSections' && parts[1]) {
+    return { table: 'sub_sections', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'subSections') {
+    return { table: 'sub_sections', raw: path };
+  }
+
+  // providers (root) — used by providers-panel.tsx (manual telecom providers)
+  if (parts[0] === 'providers' && parts[1]) {
+    return { table: 'service_providers', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'providers') {
+    return { table: 'service_providers', raw: path };
+  }
+
+  // packages (root) — used by admin-products.tsx, packages-panel.tsx
+  if (parts[0] === 'packages' && parts[1]) {
+    return { table: 'product_packages', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'packages') {
+    return { table: 'product_packages', raw: path };
+  }
+
+  // promo-codes (root)
+  if (parts[0] === 'promo-codes' && parts[1]) {
+    return { table: 'promo_codes', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'promo-codes') {
+    return { table: 'promo_codes', raw: path };
+  }
+
+  // userGiftCodes (root)
+  if (parts[0] === 'userGiftCodes' && parts[1]) {
+    return { table: 'user_gift_codes', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'userGiftCodes') {
+    return { table: 'user_gift_codes', raw: path };
+  }
+
+  // userReviews (root)
+  if (parts[0] === 'userReviews' && parts[1]) {
+    return { table: 'user_reviews', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'userReviews') {
+    return { table: 'user_reviews', raw: path };
+  }
+
+  // walletServices (root) — used by wallet-services-panel.tsx
+  if (parts[0] === 'walletServices' && parts[1]) {
+    return { table: 'wallet_services', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'walletServices') {
+    return { table: 'wallet_services', raw: path };
+  }
+
+  // transfers (root) — used by transfers-panel.tsx
+  if (parts[0] === 'transfers') {
+    return { table: 'transactions', raw: path };
+  }
+
+  // apiBalanceLog (root) — used by balance-log-panel.tsx
+  if (parts[0] === 'apiBalanceLog') {
+    return { table: 'api_balance_log', raw: path };
+  }
+
+  // auditLog (root) — used by admin-audit-log.tsx
+  if (parts[0] === 'auditLog') {
+    return { table: 'activity_log', raw: path };
+  }
+
+  // branches (root) — used by branch-management-panel.tsx (maps to offices table)
+  if (parts[0] === 'branches' && parts[1]) {
+    return { table: 'offices', filter: { column: 'id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'branches') {
+    return { table: 'offices', raw: path };
+  }
+
+  // marketingContent (root)
+  if (parts[0] === 'marketingContent') {
+    return { table: 'banners', raw: path };
+  }
+
+  // savingsGoals/{uid}/{id} — used by savings-screen.tsx
+  if (parts[0] === 'savingsGoals' && parts[1] && parts[2]) {
+    return { table: 'savings_goals', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'savingsGoals' && parts[1]) {
+    return { table: 'savings_goals', filter: { column: 'user_id', value: parts[1] }, raw: path };
+  }
+  if (parts[0] === 'savingsGoals') {
+    return { table: 'savings_goals', raw: path };
+  }
+
+  // settings/* (typo fallback for adminSettings/exchangeRates etc.)
+  if (parts[0] === 'settings' && parts[1] === 'exchangeRates') {
+    return { table: 'exchange_rates', raw: path };
+  }
+  if (parts[0] === 'settings') {
+    // Generic settings/* → app_config
+    return { table: 'app_config', filter: parts[1] ? { column: 'key', value: parts[1] } : undefined, raw: path, extractValue: !!parts[1] };
+  }
+
+  // ownerSettings/* — map to app_config with prefixed keys to avoid collisions
+  if (parts[0] === 'ownerSettings' && parts[1]) {
+    return { table: 'app_config', filter: { column: 'key', value: 'ownerSettings_' + parts[1] }, raw: path, extractValue: true };
+  }
+  if (parts[0] === 'ownerSettings') {
+    return { table: 'app_config', raw: path };
+  }
+
+  // commissionConfig/rules/{id}
+  if (parts[0] === 'commissionConfig' && parts[1] === 'rules' && parts[2]) {
+    return { table: 'commission_log', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'commissionConfig') {
+    return { table: 'commission_log', raw: path };
+  }
+
+  // priceCustomization/* — store as app_config JSON
+  if (parts[0] === 'priceCustomization' && parts[1]) {
+    return { table: 'app_config', filter: { column: 'key', value: 'priceCustomization_' + parts[1] }, raw: path, extractValue: true };
+  }
+  if (parts[0] === 'priceCustomization') {
+    return { table: 'app_config', raw: path };
+  }
+
+  // adminSettings/{key}/{id} collection semantics — these are per-item CRUD
+  // for collections like employees, offices, bulkCodes, currencyCards, etc.
+  // Route to dedicated tables where they exist.
+  if (parts[0] === 'adminSettings' && parts[1] === 'employees' && parts[2]) {
+    return { table: 'employees', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'employees') {
+    return { table: 'employees', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'offices' && parts[2]) {
+    return { table: 'offices', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'offices') {
+    return { table: 'offices', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'bulkCodes' && parts[2]) {
+    return { table: 'bulk_codes', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'bulkCodes') {
+    return { table: 'bulk_codes', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'currencyCards' && parts[2]) {
+    return { table: 'currency_cards', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'currencyCards') {
+    return { table: 'currency_cards', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'investmentPlans' && parts[2]) {
+    return { table: 'investment_plans', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'investmentPlans') {
+    return { table: 'investment_plans', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'instantRecharge' && parts[2]) {
+    return { table: 'instant_recharge', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'instantRecharge') {
+    return { table: 'instant_recharge', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'walletAddresses' && parts[2]) {
+    return { table: 'wallet_addresses', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'walletAddresses') {
+    return { table: 'wallet_addresses', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'apiProviders' && parts[2]) {
+    return { table: 'api_providers', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'apiProviders') {
+    return { table: 'api_providers', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'sentNotifications' && parts[2]) {
+    return { table: 'admin_notifications', filter: { column: 'id', value: parts[2] }, raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'sentNotifications') {
+    return { table: 'admin_notifications', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'visibility' && parts[2] === 'providers' && parts[3]) {
+    // visibility/providers/{id} — toggle visibility for a specific provider
+    return { table: 'service_providers', filter: { column: 'id', value: parts[3] }, raw: path, extractField: 'is_visible' };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'visibility') {
+    return { table: 'service_providers', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'categories' && parts[2]) {
+    // categories/api-{sectionId} — fall back to api_categories
+    return { table: 'api_categories', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'legalContent') {
+    return { table: 'legal_content', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'socialLinks') {
+    return { table: 'social_links', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'cardColors') {
+    return { table: 'card_colors', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'branding') {
+    return { table: 'branding', raw: path };
+  }
+  if (parts[0] === 'adminSettings' && parts[1] === 'limits') {
+    return { table: 'limits', raw: path };
+  }
+
   // app_config generic fallback for adminSettings/*
   // adminSettings/{key} → read/write the JSONB `value` of a single app_config row keyed by `key`.
   // This fixes the bug where the entire app_config table was returned as `{}` (rows have no `id` column),

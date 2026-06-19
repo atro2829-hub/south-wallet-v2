@@ -102,17 +102,90 @@ export default function PushNotificationsPanel() {
 
       if (!scheduleLater) {
         try {
-          const result = await sendFCMDirect(title, body, type, targetType === 'specific' ? targetUserId : undefined);
-          notifData.recipientCount = result?.successCount || 0;
-          notifData.deliveryRate = result?.successCount && result?.totalTokens ? Math.round(result.successCount / result.totalTokens * 100) : 0;
-        } catch { notifData.status = 'failed'; }
+          // FIX: sendFCMDirect signature is (tokens, title, body, type, data)
+          // We need to fetch FCM tokens first based on targetType.
+          const { supabaseAdmin } = await import('@/lib/supabase');
+          let tokens: string[] = [];
+
+          if (targetType === 'specific') {
+            // Fetch single user's FCM token
+            const { data: userRow } = await supabaseAdmin
+              .from('users')
+              .select('fcm_token')
+              .eq('id', targetUserId)
+              .maybeSingle();
+            if (userRow?.fcm_token) tokens = [userRow.fcm_token];
+          } else {
+            // Broadcast: fetch ALL users' FCM tokens
+            const { data: users, error: tokensErr } = await supabaseAdmin
+              .from('users')
+              .select('fcm_token')
+              .not('fcm_token', 'is', null)
+              .neq('fcm_token', '');
+            if (tokensErr) throw tokensErr;
+            tokens = (users || []).map((u: any) => u.fcm_token).filter(Boolean);
+          }
+
+          notifData.recipientCount = tokens.length;
+
+          if (tokens.length > 0) {
+            const result = await sendFCMDirect(tokens, title.trim(), body.trim(), type);
+            notifData.deliveryRate = result.totalTokens && result.successCount
+              ? Math.round(result.successCount / tokens.length * 100)
+              : 0;
+            // Also insert an in-app notification row for each recipient (so they see it in-app too)
+            if (targetType === 'all' || targetType === 'segment') {
+              // Batch insert notifications for all users
+              const { data: allUsers } = await supabaseAdmin
+                .from('users')
+                .select('id')
+                .not('fcm_token', 'is', null);
+              if (allUsers && allUsers.length > 0) {
+                const notifRows = allUsers.map((u: any) => ({
+                  user_id: u.id,
+                  title: title.trim(),
+                  body: body.trim(),
+                  type,
+                  is_read: false,
+                  created_at: new Date().toISOString(),
+                }));
+                // Insert in batches of 100
+                for (let i = 0; i < notifRows.length; i += 100) {
+                  await supabaseAdmin.from('notifications').insert(notifRows.slice(i, i + 100));
+                }
+              }
+            } else if (targetType === 'specific' && targetUserId) {
+              await supabaseAdmin.from('notifications').insert({
+                user_id: targetUserId,
+                title: title.trim(),
+                body: body.trim(),
+                type,
+                is_read: false,
+                created_at: new Date().toISOString(),
+              });
+            }
+          } else {
+            notifData.status = 'failed';
+            notifData.deliveryRate = 0;
+          }
+        } catch (e) {
+          notifData.status = 'failed';
+          console.error('FCM send error:', e);
+        }
       }
 
       await push(ref(database, 'adminNotifications'), notifData);
-      showToast(scheduleLater ? 'تم جدولة الإشعار' : 'تم إرسال الإشعار', 'success');
+      showToast(
+        scheduleLater ? 'تم جدولة الإشعار' :
+        notifData.recipientCount > 0 ? `تم إرسال الإشعار إلى ${notifData.recipientCount} مستخدم` :
+        'تم حفظ الإشعار لكن لم يتم الإرسال (لا يوجد مستخدمون بـ FCM token)',
+        notifData.status === 'failed' ? 'error' : 'success'
+      );
       setTitle(''); setBody(''); setTargetUserId('');
       setScheduleLater(false); setScheduledAt('');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e) {
+      showToast('حدث خطأ: ' + (e as Error).message, 'error');
+    }
     finally { setSending(false); }
   };
 
