@@ -123,64 +123,43 @@ export default function OrderBottomSheet() {
   // ─── API Auto-Processing ──────────────────────────────────────────
   // When a package has executionType='auto' and an apiProvider configured,
   // this function will call the external API and handle the result.
+  // FIX: reads providers from Supabase (api_providers table) instead of the
+  // legacy unmapped Firebase path 'adminSettings/apiProviders'.
   const processApiOrder = async (
     orderId: string,
     pkg: ProductPackage,
     orderCustomerInput: string
   ): Promise<{ success: boolean; message: string }> => {
     try {
-      // Find the API provider config from Firebase
-      const apiProvidersRef = ref(database, 'adminSettings/apiProviders');
-      const snapshot = await get(apiProvidersRef);
-      
-      if (!snapshot.exists()) {
+      // Fetch API providers from Supabase (replaces broken Firebase read)
+      const { getApiProviders, purchaseProduct } = await import('@/lib/api-providers');
+      const providers = await getApiProviders();
+
+      if (!providers || providers.length === 0) {
         return { success: false, message: 'لا يوجد مزود API مُكوّن' };
       }
-      
-      const providersData = snapshot.val();
-      let matchedProvider: ApiProviderConfig | null = null;
-      
+
       // Find the provider that matches the package's apiProvider field
-      for (const [, provider] of Object.entries(providersData)) {
-        const p = provider as any;
-        if (p.isActive && (
+      const matchedProvider = providers.find(p =>
+        p.enabled && (
           p.id === pkg.apiProvider ||
           p.name === pkg.apiProvider ||
-          // Also match if the provider's sectionId matches the package's providerId category
-          (p.sectionId && pkg.providerId && pkg.providerId.startsWith(`api-${p.sectionId}`))
-        )) {
-          matchedProvider = {
-            id: p.id || '',
-            name: p.name || '',
-            baseUrl: p.baseUrl || '',
-            apiKey: p.apiKey || '',
-            apiSecret: p.apiSecret || '',
-            method: p.method || 'POST',
-            headers: p.headers || {},
-            bodyTemplate: p.bodyTemplate || '',
-            responseFormat: p.responseFormat || 'json',
-            fieldMappings: p.fieldMappings || undefined,
-            isActive: p.isActive !== false,
-            createdAt: p.createdAt || '',
-          };
-          break;
-        }
-      }
-      
+          p.nameAr === pkg.apiProvider
+        )
+      ) || providers.find(p => p.enabled && p.type === 'g2bulk');
+
       if (!matchedProvider) {
         return { success: false, message: 'لم يتم العثور على مزود API مطابق' };
       }
-      
-      // Execute the order via API
-      const apiResult = await executeApiOrder(matchedProvider, {
-        customerId: orderCustomerInput,
-        packageId: pkg.productIdInApi || pkg.id,
-        amount: effectivePrice,
-        currency: pkg.currency,
-        phone: orderCustomerInput,
-        playerName: orderCustomerInput,
-      });
-      
+
+      // Execute the order via the modern api-providers module
+      const apiResult = await purchaseProduct(
+        matchedProvider,
+        Number(pkg.apiProductId || pkg.productIdInApi || pkg.id),
+        1,
+        orderCustomerInput,
+      );
+
       return {
         success: apiResult.success,
         message: apiResult.message || (apiResult.success ? 'تم تنفيذ الطلب بنجاح' : 'فشل تنفيذ الطلب'),

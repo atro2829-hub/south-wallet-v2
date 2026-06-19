@@ -492,7 +492,14 @@ function GamePurchaseView({
 
         // If pending, start polling for status updates
         if (result.order.status === 'PENDING' && result.order.order_id) {
-          pollOrderStatus(result.order.order_id, game.code, provider);
+          pollOrderStatus(
+            result.order.order_id,
+            game.code,
+            provider,
+            user.userId || user.id,
+            finalPrice,
+            String(result.order.order_id),
+          );
         }
       } else {
         // Order was not successful
@@ -516,7 +523,14 @@ function GamePurchaseView({
     }
   };
 
-  const pollOrderStatus = async (orderId: number, gameCode: string, provider: ApiProvider) => {
+  const pollOrderStatus = async (
+    orderId: number,
+    gameCode: string,
+    provider: ApiProvider,
+    userId: string,
+    finalPrice: number,
+    apiOrderId: string,
+  ) => {
     let attempts = 0;
     const maxAttempts = 12;
     const interval = setInterval(async () => {
@@ -526,6 +540,21 @@ function GamePurchaseView({
         const status: OrderStatus = await checkGameOrderStatus(provider, orderId, gameCode);
         if (status.status === 'COMPLETED') {
           clearInterval(interval);
+          // Update the order record in Supabase to 'completed'
+          try {
+            const { supabase } = await import('@/lib/supabase');
+            await supabase
+              .from('orders')
+              .update({
+                status: 'completed',
+                g2bulk_order_status: 'COMPLETED',
+                result_message: status.message || '',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('api_order_id', apiOrderId);
+          } catch (e) {
+            console.warn('Failed to update order status to completed:', e);
+          }
           onOrderResult({
             success: true,
             message: 'تم تسليم الطلب بنجاح!',
@@ -533,9 +562,32 @@ function GamePurchaseView({
           });
         } else if (status.status === 'FAILED') {
           clearInterval(interval);
+          // CRITICAL FIX: actually refund the balance (was missing before)
+          try {
+            const { supabaseService } = await import('@/lib/supabase');
+            await supabaseService.updateBalance(userId, 'USD', finalPrice, 'add');
+            console.log('[refund] Refunded $' + finalPrice + ' to user ' + userId + ' after FAILED order');
+          } catch (refundError) {
+            console.error('[refund] Failed to refund balance:', refundError);
+          }
+          // Update the order record to 'refunded'
+          try {
+            const { supabase } = await import('@/lib/supabase');
+            await supabase
+              .from('orders')
+              .update({
+                status: 'refunded',
+                g2bulk_order_status: 'FAILED',
+                result_message: status.message || 'Order failed, balance refunded',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('api_order_id', apiOrderId);
+          } catch (e) {
+            console.warn('Failed to update order status to refunded:', e);
+          }
           onOrderResult({
             success: false,
-            message: 'فشل الطلب وتم استرداد المبلغ',
+            message: 'فشل الطلب وتم استرداد المبلغ تلقائياً',
           });
         }
       } catch {

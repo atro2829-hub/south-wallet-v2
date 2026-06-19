@@ -205,6 +205,11 @@ export async function toggleApiProvider(providerId: string, enabled: boolean): P
 }
 
 // ===== Generic API Request =====
+// For G2Bulk, requests are routed through a Supabase Edge Function proxy
+// (g2bulk-proxy) to keep the API key server-side. For other providers,
+// the request goes directly to the provider's baseUrl with the key in the header.
+
+const G2BULK_PROXY_URL = 'https://kifmxseonkdsxuanznny.functions.supabase.co/g2bulk-proxy';
 
 async function apiRequest<T>(
   provider: ApiProvider,
@@ -212,19 +217,34 @@ async function apiRequest<T>(
   method: 'GET' | 'POST' = 'GET',
   body?: Record<string, unknown>
 ): Promise<T> {
-  const headerName = provider.authHeaderName || 'X-API-Key';
-  const headerPrefix = provider.authHeaderPrefix || '';
+  // Determine if this is a G2Bulk request (use proxy) or another provider (direct)
+  const isG2Bulk = provider.type === 'g2bulk' || provider.baseUrl.includes('g2bulk.com');
 
-  const headers: Record<string, string> = {
-    [headerName]: `${headerPrefix}${provider.apiKey}`,
-    'Content-Type': 'application/json',
-  };
+  let url: string;
+  let headers: Record<string, string>;
+
+  if (isG2Bulk) {
+    // Route through the Supabase Edge Function proxy.
+    // The proxy adds the X-API-Key header server-side.
+    url = `${G2BULK_PROXY_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+    headers = {
+      'Content-Type': 'application/json',
+      'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM',
+    };
+  } else {
+    // Direct request to other providers (key in header)
+    const headerName = provider.authHeaderName || 'X-API-Key';
+    const headerPrefix = provider.authHeaderPrefix || '';
+    const baseUrl = provider.baseUrl.replace(/\/$/, '');
+    url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+    headers = {
+      [headerName]: `${headerPrefix}${provider.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+  }
 
   const options: RequestInit = { method, headers };
   if (body && method === 'POST') options.body = JSON.stringify(body);
-
-  const baseUrl = provider.baseUrl.replace(/\/$/, '');
-  const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
   const response = await fetch(url, options);
 
@@ -312,29 +332,58 @@ export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCa
       .upsert(catRows, { onConflict: 'api_provider_id,api_category_id' });
   }
 
-  // إنشاء أقسام للفئات
-  const sectionRows = categories.map(cat => ({
-    id: `g2bulk-cat-${cat.id}`,
+  // بنية G2Bulk الصحيحة: لا ننشئ قسماً جديداً لكل فئة.
+  // بدلاً من ذلك، نُنشئ sub-sections تحت القسم الرئيسي `g2bulk-root`.
+  // هذا يمنع فوضى الأقسام في الصفحة الرئيسية للمستخدم.
+  const PARENT_SECTION_ID = 'g2bulk-root';
+
+  // ضمان وجود القسم الرئيسي
+  await supabase
+    .from('sections')
+    .upsert({
+      id: PARENT_SECTION_ID,
+      name: 'G2Bulk',
+      name_en: 'G2Bulk',
+      description: 'منتجات G2Bulk الرقمية وملحقات الألعاب',
+      icon: '🎮',
+      color: '#8B5CF6',
+      type: 'api',
+      api_provider_id: provider.id,
+      api_section_type: 'products',
+      screen_type: 'api-products',
+      sort_order: 800,
+      is_active: true,
+      is_visible: true,
+      show_in_home: true,
+      show_in_services: true,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+  // إنشاء sub-section لكل فئة تحت القسم الرئيسي
+  const subSectionRows = categories.map((cat, idx) => ({
+    id: `g2bulk-sub-${cat.id}`,
+    section_id: PARENT_SECTION_ID,
     name: cat.title,
     name_en: cat.title,
     description: cat.description || '',
-    icon: cat.image_url || '',
+    icon: cat.image_url || '📦',
+    color: '#8B5CF6',
     image_url: cat.image_url || '',
-    type: 'api' as const,
-    api_provider_id: provider.id,
+    type: 'api',
     api_category_id: String(cat.id),
-    api_section_type: 'products',
+    api_provider_id: provider.id,
+    sort_order: idx,
     is_active: true,
-    show_in_services: true,
-    show_in_home: false,
-    sort_order: 1000 + cat.id,
+    is_visible: true,
+    layout: 'grid',
+    show_count: true,
     updated_at: new Date().toISOString(),
   }));
 
-  if (sectionRows.length > 0) {
+  if (subSectionRows.length > 0) {
     await supabase
-      .from('sections')
-      .upsert(sectionRows, { onConflict: 'id' });
+      .from('sub_sections')
+      .upsert(subSectionRows, { onConflict: 'id' });
   }
 
   await supabase
@@ -368,7 +417,12 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
   for (const prod of products) {
     const spId = `g2bulk-prod-${provider.id}-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
     const pkgId = `g2bulk-pkg-${provider.id}-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
-    const sectionId = `g2bulk-cat-${prod.category_id}`;
+    // البنية الجديدة: المنتجات تُسند إلى sub-section تحت القسم الرئيسي g2bulk-root
+    const sectionId = 'g2bulk-root';
+    const subSectionId = `g2bulk-sub-${prod.category_id}`;
+    // حساب سعر البيع بعد نسبة الربح
+    const markupPercent = provider.markupPercent || 10;
+    const sellPrice = Number(((prod.unit_price || 0) * (1 + markupPercent / 100)).toFixed(2));
 
     serviceProviderRows.push({
       id: spId,
@@ -376,7 +430,7 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
       name_en: prod.title || `Product ${prod.id}`,
       description: prod.description || '',
       section_id: sectionId,
-      sub_section_id: null,
+      sub_section_id: subSectionId,
       api_product_id: String(prod.id),
       api_provider_id: provider.id,
       icon: prod.image_url || 'package',
@@ -393,15 +447,16 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
       name: prod.title || `منتج ${prod.id}`,
       name_en: prod.title || `Product ${prod.id}`,
       description: prod.description || '',
-      price_usd: prod.unit_price || 0,
-      price_yer: 0,
-      price_sar: 0,
+      price_usd: sellPrice,
+      price_yer: Math.round(sellPrice * 250), // تقدير بالريال اليمني
+      price_sar: Number((sellPrice * 3.75).toFixed(2)), // تقدير بالريال السعودي
       cost_price: prod.unit_price || 0,
       cost_currency: 'USD',
       execution_type: 'api',
       api_product_id: String(prod.id),
       image_url: prod.image_url || null,
       is_active: true,
+      stock: prod.stock || 0,
     });
 
     apiProductRows.push({
@@ -507,20 +562,24 @@ export async function syncG2BulkGames(provider: ApiProvider): Promise<ApiGame[]>
     }
   }
 
-  // قسم رئيسي واحد للألعاب يظهر في الصفحة الرئيسية
+  // قسم رئيسي واحد للألعاب. نوعه 'games' (وليس 'api') حتى يوجّه تطبيق المستخدم
+  // المستخدم إلى شاشة الألعاب (games-screen.tsx) بدلاً من شاشة المنتجات العادية.
   await supabase
     .from('sections')
     .upsert({
-      id: `g2bulk-games-${provider.id}`,
+      id: 'g2bulk-games',
       name: 'الألعاب',
       name_en: 'Games',
-      description: 'شحن الألعاب الإلكترونية',
-      icon: '🎮',
+      description: 'شحن الألعاب الإلكترونية بـ ID اللاعب والتحقق التلقائي',
+      icon: '🕹️',
+      color: '#10B981',
       image_url: '',
-      type: 'api' as const,
+      type: 'games',
       api_provider_id: provider.id,
       api_section_type: 'games',
+      screen_type: 'api-games',
       is_active: true,
+      is_visible: true,
       show_in_home: true,
       show_in_services: true,
       sort_order: 900,

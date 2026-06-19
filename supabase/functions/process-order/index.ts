@@ -58,7 +58,8 @@ serve(async (req) => {
             package_id,
             amount: amount || costPrice,
             cost_price: costPrice,
-            commission: 0,
+            commission_amount: 0,
+            commission_type: 'percentage',
             status: 'pending',
             currency,
           })
@@ -130,8 +131,10 @@ serve(async (req) => {
           updated_at: new Date().toISOString(),
         }
         if (pin_code) updates.result_pin_code = pin_code
-        if (serial_number) updates.result_serial = serial_number
-        if (receipt_data) updates.receipt_data = receipt_data
+        // Note: orders table doesn't have result_serial column; use result_message instead
+        if (serial_number) updates.result_message = `Serial: ${serial_number}`
+        // receipt_data is not a column on orders; skip silently
+        // if (receipt_data) updates.receipt_data = receipt_data
 
         const { error } = await supabase
           .from('orders')

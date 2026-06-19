@@ -1,1012 +1,742 @@
 'use client';
 
+// =====================================================================
+// G2BulkPanel — لوحة تحكم G2Bulk الكاملة (مُعاد كتابتها)
+// South Wallet Admin — لا يستخدم Firebase إطلاقاً، يعتمد Supabase فقط.
+// =====================================================================
+// Tabs:
+//   1) الإعدادات  — مفتاح API، اختبار الاتصال، عرض الرصيد
+//   2) المزامنة  — مزامنة الفئات + المنتجات + الألعاب مع تتبع مباشر
+//   3) الألعاب   — تصفح الألعاب المُزامَنة (api_games) مع صورها وأيقوناتها
+//   4) الاختبار  — تجربة checkPlayerId + استعراض الباقات + تجربة placeOrder
+// =====================================================================
+
 import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AdminHelpBox } from '@/components/admin/admin-help-box';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
-  Globe,
-  Key,
-  RefreshCw,
-  CheckCircle,
-  XCircle,
-  Loader2,
-  DollarSign,
-  Package,
-  FolderOpen,
-  Settings,
-  ArrowUpDown,
-  Eye,
-  EyeOff,
-  Save,
-  AlertTriangle,
-  ShoppingCart,
+  Globe, Key, RefreshCw, CheckCircle, XCircle, Loader2, DollarSign,
+  Package, FolderOpen, Settings, Eye, EyeOff, Save, AlertTriangle,
+  ShoppingCart, Gamepad2, Search, Play, Phone, User, Database, Zap,
 } from 'lucide-react';
+import { supabaseAdmin } from '@/lib/supabase';
 import {
-  testG2BulkConnection,
-  saveG2BulkApiKey,
-  getG2BulkSettings,
-  updateG2BulkSettings,
-  checkG2BulkBalance,
-  checkG2BulkOrderStatus,
-  type G2BulkCategory,
-  type G2BulkProduct,
-} from '@/lib/g2bulk';
+  type ApiProvider, type ApiGame, type ApiGameCatalogue, type ApiGameFields,
+  getG2BulkBalance, syncG2BulkCategories, syncG2BulkProducts, syncG2BulkGames,
+  fullG2BulkSync, getGameFields, getGameCatalogue, checkPlayerId,
+  placeGameOrder, checkGameOrderStatus, getApiProvider,
+} from '@/lib/api-providers';
 
+// ---------- helper: small toast since admin store isn't always wired up --
+function useLocalToast() {
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const show = useCallback((msg: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+  return { toast, show };
+}
+
+// ---------- main component ----------
 export default function G2BulkPanel() {
+  const [activeTab, setActiveTab] = useState('settings');
+  const [provider, setProvider] = useState<ApiProvider | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Settings tab state
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    success: boolean;
-    balance?: number;
-    username?: string;
-    error?: string;
-  } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; balance?: number; username?: string; error?: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [enabled, setEnabled] = useState(false);
-  const [autoSync, setAutoSync] = useState(false);
-  const [markupPercent, setMarkupPercent] = useState(0);
-  const [lastSync, setLastSync] = useState('');
-  const [balance, setBalance] = useState<number | null>(null);
-  const [categories, setCategories] = useState<Record<string, G2BulkCategory>>({});
-  const [products, setProducts] = useState<Record<string, G2BulkProduct>>({});
-  const [activeTab, setActiveTab] = useState('settings');
-  const [loading, setLoading] = useState(true);
+  const [markupPercent, setMarkupPercent] = useState(10);
 
-  // Live progress tracking during sync. Each row represents a synced section
-  // or product so the admin sees progress incrementally instead of waiting
-  // for the whole batch to finish.
-  const [syncProgress, setSyncProgress] = useState<{
-    phase: 'idle' | 'fetching' | 'categories' | 'products' | 'done';
-    current: number;
-    total: number;
-    currentItem: string;
-    log: Array<{ time: string; msg: string; type: 'info' | 'success' | 'error' }>;
-  }>({ phase: 'idle', current: 0, total: 0, currentItem: '', log: [] });
+  // Sync tab state
+  const [syncing, setSyncing] = useState(false);
+  const [syncLog, setSyncLog] = useState<Array<{ time: string; msg: string; type: 'info' | 'success' | 'error' }>>([]);
+  const [syncStats, setSyncStats] = useState<{ categories: number; products: number; games: number }>({ categories: 0, products: 0, games: 0 });
+
+  // Games browse tab state
+  const [games, setGames] = useState<ApiGame[]>([]);
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Test tab state
+  const [selectedGame, setSelectedGame] = useState<ApiGame | null>(null);
+  const [gameFields, setGameFields] = useState<ApiGameFields | null>(null);
+  const [catalogue, setCatalogue] = useState<ApiGameCatalogue[]>([]);
+  const [playerId, setPlayerId] = useState('');
+  const [serverId, setServerId] = useState('');
+  const [playerVerify, setPlayerVerify] = useState<{ valid: boolean; name?: string } | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [ordering, setOrdering] = useState(false);
+  const [orderResult, setOrderResult] = useState<any>(null);
+
+  const { toast, show } = useLocalToast();
 
   const appendLog = (msg: string, type: 'info' | 'success' | 'error' = 'info') => {
-    setSyncProgress(prev => ({
-      ...prev,
-      log: [...prev.log.slice(-50), { time: new Date().toLocaleTimeString('ar-EG'), msg, type }],
-    }));
+    setSyncLog(prev => [...prev.slice(-100), { time: new Date().toLocaleTimeString('ar-EG'), msg, type }]);
   };
 
-  // Load settings on mount
+  // Load provider on mount
   useEffect(() => {
-    const settingsRef = ref(database, 'adminSettings/g2bulk');
-    const unsubscribe = onValue(settingsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        setApiKey(data.apiKey || '');
-        setEnabled(data.enabled || false);
-        setAutoSync(data.autoSync || false);
-        setMarkupPercent(data.markupPercent || 0);
-        setLastSync(data.lastSync || '');
-        setCategories(data.categories || {});
-        setProducts(data.products || {});
+    (async () => {
+      setLoading(true);
+      try {
+        const p = await getApiProvider('g2bulk');
+        if (p) {
+          setProvider(p);
+          setApiKey(p.apiKey);
+          setMarkupPercent(p.markupPercent || 10);
+        }
+      } catch (e) {
+        console.error('Failed to load G2Bulk provider:', e);
       }
       setLoading(false);
-    });
-
-    return () => {
-      // Firebase onValue doesn't return a standard unsubscribe function
-      // but we should clean up
-    };
+    })();
   }, []);
 
-  // Test API connection
+  // ---------- Settings handlers ----------
   const handleTestConnection = async () => {
+    if (!provider) return;
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await testG2BulkConnection(apiKey);
-      setTestResult(result);
-      if (result.success && result.balance !== undefined) {
-        setBalance(result.balance);
+      const balance = await getG2BulkBalance(provider);
+      setTestResult({
+        success: balance.success,
+        balance: balance.balance,
+        username: balance.username,
+        error: balance.success ? undefined : 'تعذّر جلب الرصيد',
+      });
+      if (balance.success) {
+        show('تم الاتصال بنجاح ✓', 'success');
+      } else {
+        show('فشل الاتصال بـ G2Bulk', 'error');
       }
-    } catch (error: unknown) {
-      setTestResult({ success: false, error: (error as Error).message });
+    } catch (error: any) {
+      setTestResult({ success: false, error: error.message });
+      show('فشل الاتصال: ' + error.message, 'error');
     }
     setTesting(false);
   };
 
-  // Save API key
-  const handleSaveApiKey = async () => {
-    setSaving(true);
-    try {
-      await saveG2BulkApiKey(apiKey);
-    } catch (error) {
-      console.error('Failed to save API key:', error);
-    }
-    setSaving(false);
-  };
-
-  // Save general settings
   const handleSaveSettings = async () => {
+    if (!provider) return;
     setSaving(true);
     try {
-      await updateG2BulkSettings({ enabled, autoSync, markupPercent });
-    } catch (error) {
-      console.error('Failed to save settings:', error);
+      const { error } = await supabaseAdmin
+        .from('api_providers')
+        .update({
+          api_key: apiKey,
+          default_commission: markupPercent,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', 'g2bulk');
+      if (error) throw error;
+      // Refresh the local provider object
+      const updated = await getApiProvider('g2bulk');
+      if (updated) setProvider(updated);
+      show('تم حفظ الإعدادات بنجاح', 'success');
+    } catch (error: any) {
+      show('فشل الحفظ: ' + error.message, 'error');
     }
     setSaving(false);
   };
 
-  // Sync categories — uses Supabase directly (same path as the user app)
-  // so admins and users see the exact same data. Each category is written
-  // one-by-one and the progress bar updates in real time so the admin can
-  // watch the sync happen instead of staring at a spinner.
-  const handleSyncCategories = async () => {
+  // ---------- Sync handlers ----------
+  const runSync = async (kind: 'categories' | 'products' | 'games' | 'all') => {
+    if (!provider) return;
     setSyncing(true);
-    setSyncProgress({ phase: 'fetching', current: 0, total: 0, currentItem: 'جلب الأقسام من G2Bulk...', log: [] });
+    setSyncLog([]);
+    appendLog(`بدء المزامنة (${kind})...`, 'info');
     try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      const { getG2BulkSettings } = await import('@/lib/g2bulk');
-      const settings = await getG2BulkSettings();
-      if (!settings?.apiKey) throw new Error('G2Bulk API key not configured');
-
-      const baseUrl = 'https://api.g2bulk.com/v1/';
-      const headers = { 'X-API-Key': settings.apiKey };
-
-      appendLog('جاري جلب الأقسام من G2Bulk API...', 'info');
-      const res = await fetch(`${baseUrl}category`, { headers });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { categories: cats } = await res.json();
-      appendLog(`تم استلام ${cats.length} قسم. بدء المزامنة...`, 'success');
-
-      setSyncProgress(prev => ({ ...prev, phase: 'categories', total: cats.length, current: 0 }));
-
-      let inserted = 0;
-      let idx = 0;
-      for (const cat of cats) {
-        idx++;
-        const catName = cat.title || `Category ${cat.id}`;
-        setSyncProgress(prev => ({ ...prev, current: idx, currentItem: catName }));
-
-        const { error } = await supabaseAdmin.from('api_categories').upsert({
-          api_provider_id: 'g2bulk',
-          api_category_id: String(cat.id),
-          title: catName,
-          title_en: catName,
-          description: cat.description || '',
-          image_url: cat.image_url || '',
-          product_count: cat.product_count || 0,
-          is_active: true,
-          is_synced: true,
-          last_synced_at: new Date().toISOString(),
-          section_id: 'digital',
-        }, { onConflict: 'api_provider_id,api_category_id' });
-
-        if (!error) {
-          inserted++;
-          if (idx % 10 === 0 || idx === cats.length) {
-            appendLog(`✓ [${idx}/${cats.length}] ${catName}`, 'success');
-          }
-        } else {
-          appendLog(`✗ [${idx}/${cats.length}] ${catName}: ${error.message}`, 'error');
+      if (kind === 'all') {
+        const result = await fullG2BulkSync(provider);
+        setSyncStats(result);
+        appendLog(`اكتملت المزامنة الكاملة: ${result.categories} فئة، ${result.products} منتج، ${result.games} لعبة`, 'success');
+        show(`تمت المزامنة: ${result.categories} فئة / ${result.products} منتج / ${result.games} لعبة`, 'success');
+      } else {
+        let count = 0;
+        if (kind === 'categories') {
+          const cats = await syncG2BulkCategories(provider);
+          count = cats.length;
+          setSyncStats(s => ({ ...s, categories: count }));
+        } else if (kind === 'products') {
+          const prods = await syncG2BulkProducts(provider);
+          count = prods.length;
+          setSyncStats(s => ({ ...s, products: count }));
+        } else if (kind === 'games') {
+          const games = await syncG2BulkGames(provider);
+          count = games.length;
+          setSyncStats(s => ({ ...s, games: count }));
         }
+        appendLog(`اكتملت مزامنة ${kind}: ${count} عنصر`, 'success');
+        show(`تمت مزامنة ${count} ${kind === 'games' ? 'لعبة' : kind === 'products' ? 'منتج' : 'فئة'}`, 'success');
       }
-
-      await supabaseAdmin.from('api_providers').update({ last_sync_at: new Date().toISOString() }).eq('id', 'g2bulk');
-      appendLog(`اكتملت مزامنة الأقسام: ${inserted}/${cats.length} ناجح`, 'success');
-      showToast?.(`تمت مزامنة ${inserted} قسم`, 'success');
     } catch (error: any) {
-      console.error('Failed to sync categories:', error);
-      appendLog(`فشل: ${error.message}`, 'error');
-      showToast?.('فشل المزامنة: ' + error.message, 'error');
-    } finally {
-      setSyncing(false);
-      setSyncProgress(prev => ({ ...prev, phase: 'done', currentItem: '' }));
+      appendLog(`فشل المزامنة: ${error.message}`, 'error');
+      show('فشل المزامنة: ' + error.message, 'error');
     }
+    setSyncing(false);
   };
 
-  // Sync products — writes to service_providers + product_packages + api_products
-  // (Supabase, not Firebase). Products are routed into the "digital" section so
-  // they appear under "الخدمات الرقمية" on the user's home screen.
-  // Progress is shown live so the admin can see each product as it's synced.
-  const handleSyncProducts = async () => {
-    setSyncing(true);
-    setSyncProgress({ phase: 'fetching', current: 0, total: 0, currentItem: 'جلب المنتجات من G2Bulk...', log: [] });
+  // ---------- Games browse handlers ----------
+  const loadGames = useCallback(async () => {
+    setGamesLoading(true);
     try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      const { getG2BulkSettings } = await import('@/lib/g2bulk');
-      const settings = await getG2BulkSettings();
-      if (!settings?.apiKey) throw new Error('G2Bulk API key not configured');
+      const { data, error } = await supabaseAdmin
+        .from('api_games')
+        .select('*')
+        .eq('api_provider_id', 'g2bulk')
+        .eq('is_active', true)
+        .order('sort_order')
+        .limit(200);
+      if (error) throw error;
+      const mapped: ApiGame[] = (data || []).map(g => ({
+        id: Number(g.id.split('-').pop() || 0),
+        code: g.game_code,
+        name: g.name,
+        name_ar: g.name_ar || g.name,
+        image_url: g.image_url || '',
+        banner_url: g.banner_url || g.image_url || '',
+        description: g.description || '',
+        provider_id: 'g2bulk',
+        enabled: g.is_active,
+        is_featured: g.is_featured,
+        tags: g.tags || [],
+      }));
+      setGames(mapped);
+    } catch (error: any) {
+      show('فشل تحميل الألعاب: ' + error.message, 'error');
+    }
+    setGamesLoading(false);
+  }, [show]);
 
-      const baseUrl = 'https://api.g2bulk.com/v1/';
-      const apiKey = settings.apiKey;
-      const headers = { 'X-API-Key': apiKey };
+  useEffect(() => {
+    if (activeTab === 'games' && games.length === 0) loadGames();
+  }, [activeTab, games.length, loadGames]);
 
-      appendLog('جاري جلب المنتجات + الألعاب + الأقسام (متوازي)...', 'info');
-      const [prodRes, gamesRes, catRes] = await Promise.all([
-        fetch(`${baseUrl}products`, { headers }),
-        fetch(`${baseUrl}games`, { headers }),
-        fetch(`${baseUrl}category`, { headers }),
+  // ---------- Test tab handlers ----------
+  const handleSelectGameForTest = async (game: ApiGame) => {
+    setSelectedGame(game);
+    setGameFields(null);
+    setCatalogue([]);
+    setPlayerId('');
+    setServerId('');
+    setPlayerVerify(null);
+    setOrderResult(null);
+    if (!provider) return;
+    try {
+      const [fields, cat] = await Promise.all([
+        getGameFields(provider, game.code),
+        getGameCatalogue(provider, game.code),
       ]);
-      if (!prodRes.ok) throw new Error(`HTTP ${prodRes.status}`);
-      const { products: prods } = await prodRes.json();
-      const gamesData = gamesRes.ok ? (await gamesRes.json()).games : [];
-      const catsData = catRes.ok ? (await catRes.json()).categories : [];
-      appendLog(`تم استلام ${prods.length} منتج، ${gamesData.length} لعبة، ${catsData.length} قسم. بدء المزامنة...`, 'success');
-
-      // Build category + game image maps (G2Bulk /v1/products doesn't return
-      // image_url, but /v1/games does — we use the game image as the icon
-      // for any product whose category title matches a game name).
-      const catMap: Record<string, any> = {};
-      for (const c of catsData) catMap[String(c.id)] = c;
-      const gameImageMap: Record<string, string> = {};
-      for (const g of gamesData) {
-        if (g.image_url) gameImageMap[(g.name || '').toLowerCase()] = g.image_url;
-      }
-
-      const markupPercentValue = settings.markupPercent ?? 16;
-      setSyncProgress(prev => ({ ...prev, phase: 'products', total: prods.length, current: 0 }));
-
-      let inserted = 0, errors = 0;
-      for (let idx = 0; idx < prods.length; idx++) {
-        const prod = prods[idx];
-        const prodName = prod.title || `Product ${prod.id}`;
-        setSyncProgress(prev => ({ ...prev, current: idx + 1, currentItem: prodName }));
-
-        try {
-          const newId = `g2bulk-prod-g2bulk-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
-
-          // Resolve image with fallback chain
-          const cat = catMap[String(prod.category_id)] || {};
-          const catTitle = (cat.title || prod.category_title || '').toLowerCase();
-          let imageUrl = prod.image_url || cat.image_url || '';
-          if (!imageUrl && catTitle) {
-            if (gameImageMap[catTitle]) imageUrl = gameImageMap[catTitle];
-            else {
-              for (const [gn, url] of Object.entries(gameImageMap)) {
-                if (catTitle.includes(gn) || gn.includes(catTitle)) { imageUrl = url; break; }
-              }
-            }
-          }
-
-          // 1) service_providers
-          const { error: spError } = await supabaseAdmin.from('service_providers').upsert({
-            id: newId,
-            name: prodName,
-            name_en: prodName,
-            description: prod.description || '',
-            section_id: 'digital',
-            sub_section_id: null,
-            api_product_id: String(prod.id),
-            api_provider_id: 'g2bulk',
-            icon: imageUrl ? '' : 'package',
-            image_url: imageUrl,
-            color: '#8B5CF6',
-            is_active: true,
-            is_visible: true,
-            sort_order: prod.id,
-            execution_type: 'api',
-          }, { onConflict: 'id' });
-          if (spError) { errors++; appendLog(`✗ [${idx + 1}/${prods.length}] ${prodName}: ${spError.message}`, 'error'); continue; }
-
-          // 2) product_packages — apply markup
-          const pkgId = `g2bulk-pkg-g2bulk-${prod.id}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
-          const costPrice = Number(prod.unit_price) || 0;
-          const finalPriceUsd = Number((costPrice * (1 + markupPercentValue / 100)).toFixed(2));
-          const { error: pkgError } = await supabaseAdmin.from('product_packages').upsert({
-            id: pkgId,
-            provider_id: newId,
-            name: prodName,
-            name_en: prodName,
-            description: prod.description || '',
-            price_usd: finalPriceUsd,
-            price_yer: 0,
-            price_sar: 0,
-            cost_price: costPrice,
-            cost_currency: 'USD',
-            commission_amount: Number((finalPriceUsd - costPrice).toFixed(2)),
-            commission_type: 'percentage',
-            execution_type: 'api',
-            api_product_id: String(prod.id),
-            is_active: true,
-          }, { onConflict: 'id' });
-          if (pkgError) { errors++; appendLog(`✗ [${idx + 1}/${prods.length}] ${prodName}: ${pkgError.message}`, 'error'); continue; }
-
-          // 3) api_products
-          const { error: apiProdError } = await supabaseAdmin.from('api_products').upsert({
-            api_provider_id: 'g2bulk',
-            api_category_id: String(prod.category_id),
-            api_product_id: String(prod.id),
-            name: prodName,
-            name_en: prodName,
-            description: prod.description || '',
-            price: costPrice,
-            currency: 'USD',
-            image_url: imageUrl,
-            is_active: true,
-            is_synced: true,
-            last_synced_at: new Date().toISOString(),
-            provider_id: newId,
-            package_id: pkgId,
-            product_data: prod,
-          }, { onConflict: 'api_provider_id,api_product_id' });
-          if (apiProdError) { errors++; continue; }
-
-          inserted++;
-          if (idx % 25 === 0 || idx === prods.length - 1) {
-            appendLog(`✓ [${idx + 1}/${prods.length}] ${prodName}${imageUrl ? ' (مع صورة)' : ''}`, 'success');
-          }
-        } catch (e) {
-          errors++;
-        }
-      }
-
-      await supabaseAdmin.from('api_providers').update({ last_sync_at: new Date().toISOString() }).eq('id', 'g2bulk');
-      appendLog(`اكتملت مزامنة المنتجات: ${inserted}/${prods.length} ناجح، ${errors} خطأ`, errors > 0 ? 'warning' : 'success');
-      showToast?.(`تمت مزامنة ${inserted} منتج (${errors} أخطاء)`, errors > 0 ? 'warning' : 'success');
+      setGameFields(fields);
+      setCatalogue(cat);
+      show(`تم تحميل ${cat.length} باقة للعبة ${game.name}`, 'success');
     } catch (error: any) {
-      console.error('Failed to sync products:', error);
-      appendLog(`فشل: ${error.message}`, 'error');
-      showToast?.('فشل المزامنة: ' + error.message, 'error');
-    } finally {
-      setSyncing(false);
-      setSyncProgress(prev => ({ ...prev, phase: 'done', currentItem: '' }));
+      show('فشل تحميل بيانات اللعبة: ' + error.message, 'error');
     }
   };
 
-  // Full sync = categories + products + balance refresh
-  const handleFullSync = async () => {
-    setSyncProgress({ phase: 'fetching', current: 0, total: 0, currentItem: 'بدء المزامنة الكاملة...', log: [] });
-    appendLog('بدء المزامنة الكاملة...', 'info');
-    await handleSyncCategories();
-    await handleSyncProducts();
+  const handleVerifyPlayer = async () => {
+    if (!provider || !selectedGame || !playerId) return;
+    setVerifying(true);
+    setPlayerVerify(null);
     try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      const { getG2BulkSettings } = await import('@/lib/g2bulk');
-      const settings = await getG2BulkSettings();
-      if (settings?.apiKey) {
-        const balRes = await fetch('https://api.g2bulk.com/v1/getMe', { headers: { 'X-API-Key': settings.apiKey } });
-        if (balRes.ok) {
-          const me = await balRes.json();
-          await supabaseAdmin.from('api_providers').update({
-            balance: me.balance || 0,
-            balance_currency: 'USD',
-            last_balance_check: new Date().toISOString(),
-          }).eq('id', 'g2bulk');
-          appendLog(`تم تحديث رصيد G2Bulk: ${me.balance} USD`, 'success');
-        }
+      const result = await checkPlayerId(provider, selectedGame.code, playerId, serverId || undefined);
+      setPlayerVerify({ valid: result.valid, name: result.name });
+      if (result.valid) {
+        show(`✓ اسم اللاعب: ${result.name}`, 'success');
+      } else {
+        show('✗ معرف غير صالح', 'error');
       }
-    } catch (e: any) {
-      appendLog(`فشل تحديث الرصيد: ${e.message}`, 'error');
+    } catch (error: any) {
+      setPlayerVerify({ valid: false });
+      show('فشل التحقق: ' + error.message, 'error');
     }
-    appendLog('اكتملت المزامنة الكاملة', 'success');
+    setVerifying(false);
   };
 
-  // Check balance
-  const handleCheckBalance = async () => {
+  const handleTestOrder = async (catalogue: ApiGameCatalogue) => {
+    if (!provider || !selectedGame || !playerId) return;
+    if (!playerVerify?.valid) {
+      show('يجب التحقق من معرف اللاعب أولاً', 'error');
+      return;
+    }
+    setOrdering(true);
+    setOrderResult(null);
     try {
-      const result = await checkG2BulkBalance();
+      const result = await placeGameOrder(
+        provider,
+        selectedGame.code,
+        catalogue.name,
+        playerId,
+        serverId || undefined,
+      );
+      setOrderResult(result);
       if (result.success) {
-        setBalance(result.balance);
+        show(`✓ تم إنشاء الطلب #${result.order.order_id}`, 'success');
+        // Poll for status
+        const poll = async (attempt = 0) => {
+          if (attempt > 12) return;
+          try {
+            const status = await checkGameOrderStatus(provider, result.order.order_id, selectedGame.code);
+            setOrderResult((prev: any) => ({ ...prev, _status: status }));
+            if (status.status === 'PENDING' || status.status === 'PROCESSING') {
+              setTimeout(() => poll(attempt + 1), 5000);
+            }
+          } catch {}
+        };
+        setTimeout(() => poll(), 5000);
+      } else {
+        show('✗ فشل الطلب: ' + result.message, 'error');
       }
-    } catch (error) {
-      console.error('Failed to check balance:', error);
+    } catch (error: any) {
+      setOrderResult({ success: false, message: error.message });
+      show('فشل الطلب: ' + error.message, 'error');
     }
+    setOrdering(false);
   };
 
-  // Toggle category enabled — uses Supabase directly
-  const handleToggleCategory = async (catId: string, enabled: boolean) => {
-    try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      await supabaseAdmin.from('api_categories')
-        .update({ is_active: enabled, updated_at: new Date().toISOString() })
-        .eq('api_category_id', catId).eq('api_provider_id', 'g2bulk');
-    } catch (error) {
-      console.error('Failed to update category:', error);
-    }
-  };
-
-  // Map category to section — uses Supabase directly
-  const handleMapCategory = async (catId: string, mappedToSection: string) => {
-    try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      await supabaseAdmin.from('api_categories')
-        .update({ section_id: mappedToSection, updated_at: new Date().toISOString() })
-        .eq('api_category_id', catId).eq('api_provider_id', 'g2bulk');
-    } catch (error) {
-      console.error('Failed to map category:', error);
-    }
-  };
-
-  // Toggle product enabled — uses Supabase directly
-  const handleToggleProduct = async (prodId: string, enabled: boolean) => {
-    try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      await supabaseAdmin.from('service_providers')
-        .update({ is_active: enabled, updated_at: new Date().toISOString() })
-        .eq('api_product_id', prodId).eq('api_provider_id', 'g2bulk');
-      await supabaseAdmin.from('product_packages')
-        .update({ is_active: enabled, updated_at: new Date().toISOString() })
-        .eq('api_product_id', prodId);
-    } catch (error) {
-      console.error('Failed to update product:', error);
-    }
-  };
-
-  // Update product markup — uses Supabase directly
-  const handleProductMarkup = async (prodId: string, markupPercent: number) => {
-    try {
-      const { supabaseAdmin } = await import('@/lib/supabase');
-      // Re-calculate price based on cost + new markup
-      const { data: pkg } = await supabaseAdmin.from('product_packages')
-        .select('cost_price').eq('api_product_id', prodId).maybeSingle();
-      if (pkg) {
-        const newPrice = Number(((Number(pkg.cost_price) || 0) * (1 + markupPercent / 100)).toFixed(2));
-        const commission = Number((newPrice - (Number(pkg.cost_price) || 0)).toFixed(2));
-        await supabaseAdmin.from('product_packages')
-          .update({ price_usd: newPrice, commission_amount: commission, updated_at: new Date().toISOString() })
-          .eq('api_product_id', prodId);
-      }
-    } catch (error) {
-      console.error('Failed to update product markup:', error);
-    }
-  };
-
-  const sectionOptions = [
-    { value: '', label: 'غير محدد' },
-    { value: 'telecom', label: 'الاتصالات' },
-    { value: 'entertainment', label: 'الخدمات الترفيهية' },
-    { value: 'games', label: 'الألعاب' },
-    { value: 'gift-cards', label: 'بطاقات الهدايا' },
-    { value: 'digital-wallets', label: 'المحافظ الرقمية' },
-    { value: 'usdt', label: 'شراء USDT' },
-    { value: 'investment', label: 'الاستثمار' },
-  ];
-
-  const categoriesList = Object.values(categories);
-  const productsList = Object.values(products);
-  const enabledProductsCount = productsList.filter((p) => p.enabled).length;
-
+  // ---------- Render ----------
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <AdminHelpBox
-        title="كيفية استخدام لوحة G2Bulk"
-        intro="G2Bulk هو مزود رئيسي للشحن والألعاب والباقات. هذه اللوحة مخصصة لإدارة التكامل معه بشكل تفصيلي."
-        steps={[
-          { title: 'إعداد API Key', description: 'في "إعدادات API" أدخل مفتاح G2Bulk. اختبر الاتصال بضغط "اختبار" — يجب أن يعيد رصيد حسابك.' },
-          { title: 'مزامنة المنتجات', description: 'اضغط "مزامنة" لجلب كل المنتجات والتصنيفات والألعاب. قد تستغرق المزامنة 1-3 دقائق.' },
-          { title: 'مراقبة الرصيد', description: 'الرصيد الحالي يظهر في الأعلى. اضغط "تحديث" لجلب آخر قيمة. التنبيه يظهر عند الانخفاض عن 50$.' },
-          { title: 'سجل الطلبات', description: 'كل طلبات G2Bulk تُسجَّل مع رقم الطلب، الحالة، التكلفة. يمكنك إعادة المحاولة للطلبات الفاشلة.' },
-        ]}
-        tips={[
-          'أضف رصيداً كافياً في حساب G2Bulk لتجنب فشل الطلبات في أوقات الذروة.',
-          'فعّل المزامنة التلقائية يومياً للحصول على المنتجات والأسعار الجديدة.',
-          'تواصل مع دعم G2Bulk مباشرة لأي مشكلة في الطلبات الكبيرة.',
-        ]}
-      />
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
-            <Globe className="w-6 h-6 text-blue-400" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold">مزود G2Bulk</h2>
-            <p className="text-sm text-muted-foreground">
-              إدارة مزود الخدمات G2Bulk والمزامنة مع الأقسام
-            </p>
-          </div>
+    <div className="space-y-4">
+      {toast && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm ${
+          toast.type === 'success' ? 'bg-green-600 text-white' :
+          toast.type === 'error' ? 'bg-red-600 text-white' :
+          'bg-blue-600 text-white'
+        }`}>
+          {toast.msg}
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant={enabled ? 'default' : 'secondary'} className={enabled ? 'bg-green-600' : ''}>
-            {enabled ? 'مفعّل' : 'معطّل'}
-          </Badge>
-          {balance !== null && (
-            <Badge variant="outline" className="text-blue-400 border-blue-500/30">
-              <DollarSign className="w-3 h-3 ml-1" />
-              رصيد: ${balance.toFixed(2)}
-            </Badge>
-          )}
-        </div>
-      </div>
+      )}
 
-      {/* Tabs */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Globe className="h-5 w-5" />
+            لوحة تحكم G2Bulk
+            <Badge variant="outline" className="mr-2">المزود الافتراضي</Badge>
+          </CardTitle>
+        </CardHeader>
+      </Card>
+
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="settings">
-            <Settings className="w-4 h-4 ml-1" />
-            الإعدادات
+        <TabsList className="grid grid-cols-4">
+          <TabsTrigger value="settings" className="flex items-center gap-1">
+            <Settings className="h-4 w-4" /> الإعدادات
           </TabsTrigger>
-          <TabsTrigger value="categories">
-            <FolderOpen className="w-4 h-4 ml-1" />
-            الأقسام ({categoriesList.length})
+          <TabsTrigger value="sync" className="flex items-center gap-1">
+            <RefreshCw className="h-4 w-4" /> المزامنة
           </TabsTrigger>
-          <TabsTrigger value="products">
-            <Package className="w-4 h-4 ml-1" />
-            المنتجات ({enabledProductsCount}/{productsList.length})
+          <TabsTrigger value="games" className="flex items-center gap-1">
+            <Gamepad2 className="h-4 w-4" /> الألعاب
           </TabsTrigger>
-          <TabsTrigger value="sync">
-            <RefreshCw className="w-4 h-4 ml-1" />
-            المزامنة
+          <TabsTrigger value="test" className="flex items-center gap-1">
+            <Play className="h-4 w-4" /> الاختبار
           </TabsTrigger>
         </TabsList>
 
-        {/* Settings Tab */}
-        <TabsContent value="settings" className="space-y-4 mt-4">
-          {/* API Key */}
+        {/* ===== Settings tab ===== */}
+        <TabsContent value="settings" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Key className="w-5 h-5 text-yellow-500" />
-                مفتاح API
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Key className="h-4 w-4" /> مفتاح API
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <div className="flex-1 relative">
+            <CardContent className="space-y-3">
+              <div>
+                <Label htmlFor="api-key">مفتاح G2Bulk API</Label>
+                <div className="flex gap-2 mt-1">
                   <Input
+                    id="api-key"
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="أدخل مفتاح G2Bulk API"
-                    className="pl-10"
+                    onChange={e => setApiKey(e.target.value)}
+                    placeholder="أدخل مفتاح API من G2Bulk"
                     dir="ltr"
                   />
-                  <button
-                    onClick={() => setShowKey(!showKey)}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+                  <Button variant="outline" size="icon" onClick={() => setShowKey(!showKey)}>
+                    {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
                 </div>
-                <Button onClick={handleSaveApiKey} disabled={saving || !apiKey}>
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  حفظ
-                </Button>
               </div>
-
+              <div>
+                <Label htmlFor="markup">نسبة الربح (%)</Label>
+                <Input
+                  id="markup"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={markupPercent}
+                  onChange={e => setMarkupPercent(Number(e.target.value))}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  تُضاف هذه النسبة إلى سعر تكلفة كل منتج/باقة لتحديد سعر البيع للمستخدم.
+                </p>
+              </div>
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={handleTestConnection}
-                  disabled={testing || !apiKey}
-                  className="flex-1"
-                >
-                  {testing ? (
-                    <Loader2 className="w-4 h-4 animate-spin ml-2" />
-                  ) : (
-                    <CheckCircle className="w-4 h-4 ml-2" />
-                  )}
+                <Button onClick={handleSaveSettings} disabled={saving}>
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <Save className="h-4 w-4 ml-2" />}
+                  حفظ الإعدادات
+                </Button>
+                <Button variant="outline" onClick={handleTestConnection} disabled={testing || !apiKey}>
+                  {testing ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <Zap className="h-4 w-4 ml-2" />}
                   اختبار الاتصال
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleCheckBalance}
-                  disabled={!apiKey}
-                >
-                  <DollarSign className="w-4 h-4 ml-2" />
-                  فحص الرصيد
-                </Button>
               </div>
+            </CardContent>
+          </Card>
 
-              {testResult && (
-                <div
-                  className={`p-3 rounded-lg flex items-center gap-2 ${
-                    testResult.success
-                      ? 'bg-green-500/10 border border-green-500/30'
-                      : 'bg-red-500/10 border border-red-500/30'
-                  }`}
-                >
+          {testResult && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
                   {testResult.success ? (
-                    <CheckCircle className="w-5 h-5 text-green-500" />
+                    <><CheckCircle className="h-4 w-4 text-green-600" /> تم الاتصال بنجاح</>
                   ) : (
-                    <XCircle className="w-5 h-5 text-red-500" />
+                    <><XCircle className="h-4 w-4 text-red-600" /> فشل الاتصال</>
                   )}
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">
-                      {testResult.success
-                        ? `متصل بنجاح - المستخدم: ${testResult.username}`
-                        : `فشل الاتصال: ${testResult.error}`}
-                    </p>
-                    {testResult.balance !== undefined && (
-                      <p className="text-xs text-muted-foreground">
-                        الرصيد: ${testResult.balance.toFixed(2)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* General Settings */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Settings className="w-5 h-5 text-gray-400" />
-                الإعدادات العامة
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label>تفعيل مزود G2Bulk</Label>
-                  <p className="text-xs text-muted-foreground">
-                    تفعيل أو تعطيل مزود G2Bulk في تطبيق المستخدم
-                  </p>
-                </div>
-                <Switch checked={enabled} onCheckedChange={setEnabled} />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label>مزامنة تلقائية</Label>
-                  <p className="text-xs text-muted-foreground">
-                    مزامنة المنتجات والأقسام تلقائياً
-                  </p>
-                </div>
-                <Switch checked={autoSync} onCheckedChange={setAutoSync} />
-              </div>
-
-              <div className="space-y-2">
-                <Label>نسبة الهامش الافتراضي (%)</Label>
-                <p className="text-xs text-muted-foreground">
-                  نسبة الزيادة على سعر المنتج عند البيع للمستخدم
-                </p>
-                <Input
-                  type="number"
-                  value={markupPercent}
-                  onChange={(e) => setMarkupPercent(Number(e.target.value))}
-                  min={0}
-                  max={100}
-                  step={1}
-                  dir="ltr"
-                />
-              </div>
-
-              <Button onClick={handleSaveSettings} disabled={saving} className="w-full">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : <Save className="w-4 h-4 ml-2" />}
-                حفظ الإعدادات
-              </Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Categories Tab */}
-        <TabsContent value="categories" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FolderOpen className="w-5 h-5 text-orange-400" />
-                  الأقسام المتاحة
                 </CardTitle>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSyncCategories}
-                  disabled={syncing || !apiKey}
-                >
-                  {syncing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-4 h-4" />
-                  )}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {categoriesList.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <FolderOpen className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                  <p>لا توجد أقسام. قم بالمزامنة أولاً.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {categoriesList.map((cat) => (
-                    <div
-                      key={cat.id}
-                      className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Switch
-                          checked={cat.enabled !== false}
-                          onCheckedChange={(checked) =>
-                            handleToggleCategory(String(cat.id), checked)
-                          }
-                        />
-                        <div>
-                          <p className="text-sm font-medium">{cat.title}</p>
-                          <p className="text-xs text-muted-foreground">ID: {cat.id}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={cat.mappedToSection || ''}
-                          onChange={(e) =>
-                            handleMapCategory(String(cat.id), e.target.value)
-                          }
-                          className="text-xs bg-background border border-border rounded px-2 py-1"
-                          dir="rtl"
-                        >
-                          {sectionOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+              </CardHeader>
+              <CardContent>
+                {testResult.success ? (
+                  <div className="space-y-1 text-sm">
+                    <div className="flex items-center gap-2">
+                      <User className="h-4 w-4 text-muted-foreground" />
+                      المستخدم: <span className="font-mono">{testResult.username || '—'}</span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Products Tab */}
-        <TabsContent value="products" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Package className="w-5 h-5 text-purple-400" />
-                  المنتجات ({enabledProductsCount}/{productsList.length})
-                </CardTitle>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSyncProducts}
-                  disabled={syncing || !apiKey}
-                >
-                  {syncing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-4 h-4" />
-                  )}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {productsList.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                  <p>لا توجد منتجات. قم بالمزامنة أولاً.</p>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                  {productsList.map((prod) => {
-                    const finalPrice =
-                      prod.customPrice > 0
-                        ? prod.customPrice
-                        : prod.unit_price * (1 + (prod.markupPercent || markupPercent) / 100);
-                    return (
-                      <div
-                        key={prod.id}
-                        className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30"
-                      >
-                        <div className="flex items-center gap-3">
-                          <Switch
-                            checked={prod.enabled !== false}
-                            onCheckedChange={(checked) =>
-                              handleToggleProduct(String(prod.id), checked)
-                            }
-                          />
-                          <div>
-                            <p className="text-sm font-medium">{prod.title}</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <Badge variant="outline" className="text-xs">
-                                ${prod.unit_price.toFixed(2)}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground">→</span>
-                              <Badge className="text-xs bg-green-600/20 text-green-400 border-green-500/30">
-                                ${finalPrice.toFixed(2)}
-                              </Badge>
-                              {prod.stock > 0 ? (
-                                <Badge variant="outline" className="text-xs text-blue-400">
-                                  مخزون: {prod.stock}
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-xs text-red-400">
-                                  نفذ
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1">
-                            <Label className="text-xs text-muted-foreground">هامش:</Label>
-                            <Input
-                              type="number"
-                              value={prod.markupPercent || 0}
-                              onChange={(e) =>
-                                handleProductMarkup(String(prod.id), Number(e.target.value))
-                              }
-                              className="w-16 h-7 text-xs text-center"
-                              min={0}
-                              max={500}
-                              dir="ltr"
-                            />
-                            <span className="text-xs text-muted-foreground">%</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Sync Tab */}
-        <TabsContent value="sync" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <RefreshCw className="w-5 h-5 text-cyan-400" />
-                المزامنة مع G2Bulk
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {lastSync && (
-                <div className="p-3 rounded-lg bg-muted/50 border border-border">
-                  <p className="text-xs text-muted-foreground">
-                    آخر مزامنة: {new Date(lastSync).toLocaleString('ar')}
-                  </p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Button
-                  variant="outline"
-                  onClick={handleSyncCategories}
-                  disabled={syncing || !apiKey}
-                  className="h-auto py-4 flex-col gap-2"
-                >
-                  <FolderOpen className="w-6 h-6 text-orange-400" />
-                  <span className="text-sm">مزامنة الأقسام</span>
-                  <span className="text-xs text-muted-foreground">
-                    {categoriesList.length} قسم
-                  </span>
-                </Button>
-
-                <Button
-                  variant="outline"
-                  onClick={handleSyncProducts}
-                  disabled={syncing || !apiKey}
-                  className="h-auto py-4 flex-col gap-2"
-                >
-                  <Package className="w-6 h-6 text-purple-400" />
-                  <span className="text-sm">مزامنة المنتجات</span>
-                  <span className="text-xs text-muted-foreground">
-                    {productsList.length} منتج
-                  </span>
-                </Button>
-
-                <Button
-                  variant="outline"
-                  onClick={handleFullSync}
-                  disabled={syncing || !apiKey}
-                  className="h-auto py-4 flex-col gap-2"
-                >
-                  <ArrowUpDown className="w-6 h-6 text-cyan-400" />
-                  <span className="text-sm">مزامنة كاملة</span>
-                  <span className="text-xs text-muted-foreground">أقسام + منتجات</span>
-                </Button>
-              </div>
-
-              {syncing && syncProgress.phase !== 'idle' && (
-                <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border">
-                  {/* Phase + current item */}
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
-                    <span className="text-sm font-medium">
-                      {syncProgress.phase === 'fetching' && 'جارٍ الجلب من G2Bulk...'}
-                      {syncProgress.phase === 'categories' && `مزامنة الأقسام (${syncProgress.current}/${syncProgress.total})`}
-                      {syncProgress.phase === 'products' && `مزامنة المنتجات (${syncProgress.current}/${syncProgress.total})`}
-                      {syncProgress.phase === 'done' && 'اكتملت المزامنة'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <DollarSign className="h-4 w-4 text-muted-foreground" />
+                      الرصيد: <span className="font-mono font-bold text-green-600">${testResult.balance?.toFixed(2)}</span>
+                    </div>
                   </div>
-                  {syncProgress.currentItem && (
-                    <p className="text-xs text-muted-foreground truncate pr-6">→ {syncProgress.currentItem}</p>
-                  )}
-                  {/* Progress bar */}
-                  {syncProgress.total > 0 && (
-                    <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full bg-cyan-500 transition-all duration-300"
-                        style={{ width: `${Math.min(100, (syncProgress.current / syncProgress.total) * 100)}%` }}
-                      />
-                    </div>
-                  )}
-                  {/* Live log */}
-                  {syncProgress.log.length > 0 && (
-                    <div className="max-h-48 overflow-y-auto rounded-md bg-background/50 border border-border/50 p-2 space-y-0.5" dir="ltr">
-                      {syncProgress.log.slice(-30).map((entry, i) => (
-                        <div key={i} className="text-[10px] font-mono flex gap-2" style={{
-                          color: entry.type === 'success' ? '#10B981' : entry.type === 'error' ? '#EF4444' : '#888',
-                        }}>
-                          <span className="text-muted-foreground shrink-0">{entry.time}</span>
-                          <span className="truncate">{entry.msg}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                ) : (
+                  <div className="text-sm text-red-600">{testResult.error}</div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
-              {!syncing && syncProgress.phase === 'done' && syncProgress.log.length > 0 && (
-                <details className="rounded-lg bg-muted/30 border border-border">
-                  <summary className="cursor-pointer p-3 text-sm text-muted-foreground">سجل آخر مزامنة ({syncProgress.log.length} حدث)</summary>
-                  <div className="max-h-48 overflow-y-auto px-3 pb-3 space-y-0.5" dir="ltr">
-                    {syncProgress.log.map((entry, i) => (
-                      <div key={i} className="text-[10px] font-mono flex gap-2" style={{
-                        color: entry.type === 'success' ? '#10B981' : entry.type === 'error' ? '#EF4444' : '#888',
-                      }}>
-                        <span className="text-muted-foreground shrink-0">{entry.time}</span>
-                        <span className="truncate">{entry.msg}</span>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">معلومات المزود</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm space-y-1">
+              <div>الاسم: <span className="font-mono">{provider?.name || 'G2Bulk'}</span></div>
+              <div>الرابط: <span className="font-mono" dir="ltr">{provider?.baseUrl || 'https://api.g2bulk.com'}</span></div>
+              <div>آخر مزامنة: <span className="font-mono">{provider?.lastSync ? new Date(provider.lastSync).toLocaleString('ar-EG') : '—'}</span></div>
+              <div>الحالة: {provider?.enabled ? <Badge className="bg-green-100 text-green-700">مُفعّل</Badge> : <Badge variant="secondary">معطّل</Badge>}</div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ===== Sync tab ===== */}
+        <TabsContent value="sync" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">مزامنة البيانات من G2Bulk</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">{syncStats.categories}</div>
+                  <div className="text-xs text-muted-foreground">فئة</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">{syncStats.products}</div>
+                  <div className="text-xs text-muted-foreground">منتج</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-2xl font-bold">{syncStats.games}</div>
+                  <div className="text-xs text-muted-foreground">لعبة</div>
+                </div>
+                <div className="rounded-lg border p-3 bg-amber-50">
+                  <div className="text-xs text-muted-foreground">آخر مزامنة</div>
+                  <div className="text-xs font-mono">{provider?.lastSync ? new Date(provider.lastSync).toLocaleString('ar-EG') : '—'}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Button onClick={() => runSync('categories')} disabled={syncing} variant="outline">
+                  <FolderOpen className="h-4 w-4 ml-2" /> مزامنة الفئات
+                </Button>
+                <Button onClick={() => runSync('products')} disabled={syncing} variant="outline">
+                  <Package className="h-4 w-4 ml-2" /> مزامنة المنتجات
+                </Button>
+                <Button onClick={() => runSync('games')} disabled={syncing} variant="outline">
+                  <Gamepad2 className="h-4 w-4 ml-2" /> مزامنة الألعاب
+                </Button>
+                <Button onClick={() => runSync('all')} disabled={syncing}>
+                  {syncing ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <RefreshCw className="h-4 w-4 ml-2" />}
+                  مزامنة شاملة
+                </Button>
+              </div>
+
+              <div className="text-xs text-muted-foreground bg-blue-50 p-3 rounded-lg">
+                <strong>ملاحظة:</strong> المزامنة الشاملة تجلب الفئات والمنتجات والألعاب بالتوازي.
+                الفئات تُنشأ كـ sub-sections تحت القسم الرئيسي <code className="bg-white px-1">g2bulk-root</code>،
+                والألعاب تُخزَّن في جدول <code className="bg-white px-1">api_games</code> وتظهر تحت قسم
+                <code className="bg-white px-1">الألعاب</code>.
+              </div>
+            </CardContent>
+          </Card>
+
+          {syncLog.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Database className="h-4 w-4" /> سجل المزامنة
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-64 w-full rounded border p-3 bg-slate-50">
+                  <div className="space-y-1 font-mono text-xs">
+                    {syncLog.map((entry, i) => (
+                      <div key={i} className={
+                        entry.type === 'success' ? 'text-green-700' :
+                        entry.type === 'error' ? 'text-red-700' : 'text-slate-700'
+                      }>
+                        <span className="text-slate-400">[{entry.time}]</span> {entry.msg}
                       </div>
                     ))}
                   </div>
-                </details>
-              )}
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
 
-              {!apiKey && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-                  <AlertTriangle className="w-5 h-5 text-yellow-500" />
-                  <p className="text-sm text-yellow-600">
-                    يرجى إدخال مفتاح API وحفظه أولاً قبل المزامنة
-                  </p>
+        {/* ===== Games browse tab ===== */}
+        <TabsContent value="games" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Gamepad2 className="h-4 w-4" /> الألعاب المُزامَنة ({games.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="ابحث عن لعبة..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="flex-1"
+                />
+                <Button variant="outline" onClick={loadGames} disabled={gamesLoading}>
+                  {gamesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                </Button>
+              </div>
+
+              {gamesLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : games.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Gamepad2 className="h-12 w-12 mx-auto mb-2 opacity-30" />
+                  لا توجد ألعاب مُزامَنة. اضغط على "مزامنة الألعاب" من تبويب المزامنة.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  {games
+                    .filter(g => !searchQuery || g.name.toLowerCase().includes(searchQuery.toLowerCase()) || g.code.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map(game => {
+                      const imgUrl = game.image_url && game.image_url.startsWith('http')
+                        ? game.image_url
+                        : game.image_url
+                          ? `https://api.g2bulk.com${game.image_url}`
+                          : '';
+                      return (
+                        <button
+                          key={game.code}
+                          onClick={() => { setActiveTab('test'); handleSelectGameForTest(game); }}
+                          className="rounded-lg border p-2 hover:bg-accent transition-colors text-right"
+                        >
+                          <div className="aspect-square bg-slate-100 rounded-md overflow-hidden mb-2 flex items-center justify-center">
+                            {imgUrl ? (
+                              <img src={imgUrl} alt={game.name} className="w-full h-full object-contain" />
+                            ) : (
+                              <Gamepad2 className="h-8 w-8 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="text-xs font-medium truncate">{game.name}</div>
+                          <div className="text-xs text-muted-foreground truncate" dir="ltr">{game.code}</div>
+                        </button>
+                      );
+                    })}
                 </div>
               )}
             </CardContent>
           </Card>
+        </TabsContent>
 
-          {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card>
-              <CardContent className="p-4 text-center">
-                <FolderOpen className="w-6 h-6 mx-auto mb-1 text-orange-400" />
-                <p className="text-2xl font-bold">{categoriesList.length}</p>
-                <p className="text-xs text-muted-foreground">قسم</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <Package className="w-6 h-6 mx-auto mb-1 text-purple-400" />
-                <p className="text-2xl font-bold">{productsList.length}</p>
-                <p className="text-xs text-muted-foreground">منتج</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <CheckCircle className="w-6 h-6 mx-auto mb-1 text-green-400" />
-                <p className="text-2xl font-bold">{enabledProductsCount}</p>
-                <p className="text-xs text-muted-foreground">مفعّل</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <DollarSign className="w-6 h-6 mx-auto mb-1 text-blue-400" />
-                <p className="text-2xl font-bold">
-                  {balance !== null ? `$${balance.toFixed(2)}` : '-'}
-                </p>
-                <p className="text-xs text-muted-foreground">رصيد G2Bulk</p>
-              </CardContent>
-            </Card>
-          </div>
+        {/* ===== Test tab ===== */}
+        <TabsContent value="test" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Play className="h-4 w-4" /> اختبار تدفق شراء اللعبة
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-3">
+                اختر لعبة من تبويب "الألعاب" أو اكتب كود اللعبة يدويًا، ثم جرّب التحقق من معرف اللاعب وإنشاء طلب اختباري.
+              </p>
+
+              {!selectedGame ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  <Play className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  اختر لعبة من تبويب "الألعاب" لبدء الاختبار.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Selected game info */}
+                  <div className="rounded-lg border p-3 bg-slate-50">
+                    <div className="flex items-center gap-3">
+                      {selectedGame.image_url && (
+                        <img
+                          src={selectedGame.image_url.startsWith('http') ? selectedGame.image_url : `https://api.g2bulk.com${selectedGame.image_url}`}
+                          alt={selectedGame.name}
+                          className="w-12 h-12 rounded-md object-contain bg-white"
+                        />
+                      )}
+                      <div>
+                        <div className="font-medium">{selectedGame.name}</div>
+                        <div className="text-xs text-muted-foreground" dir="ltr">{selectedGame.code}</div>
+                      </div>
+                    </div>
+                    {gameFields && (
+                      <div className="mt-3 text-xs">
+                        <span className="font-medium">الحقول المطلوبة:</span>{' '}
+                        {gameFields.fields.length > 0 ? (
+                          <span className="font-mono">{gameFields.fields.join('، ')}</span>
+                        ) : (
+                          <span className="text-muted-foreground">لا توجد</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Player ID verification */}
+                  <div className="space-y-2">
+                    <Label>معرف اللاعب (Player ID)</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={playerId}
+                        onChange={e => setPlayerId(e.target.value)}
+                        placeholder="أدخل معرف اللاعب"
+                        dir="ltr"
+                      />
+                      <Button onClick={handleVerifyPlayer} disabled={verifying || !playerId}>
+                        {verifying ? <Loader2 className="h-4 w-4 animate-spin ml-1" /> : <Search className="h-4 w-4 ml-1" />}
+                        تحقق
+                      </Button>
+                    </div>
+
+                    {gameFields?.fields.includes('serverid') && (
+                      <div>
+                        <Label className="text-xs">معرف السيرفر (Server ID)</Label>
+                        <Input
+                          value={serverId}
+                          onChange={e => setServerId(e.target.value)}
+                          placeholder="أدخل معرف السيرفر (إن لزم)"
+                          dir="ltr"
+                          className="mt-1"
+                        />
+                      </div>
+                    )}
+
+                    {playerVerify && (
+                      <div className={`rounded-md p-2 text-sm flex items-center gap-2 ${
+                        playerVerify.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                      }`}>
+                        {playerVerify.valid ? (
+                          <><CheckCircle className="h-4 w-4" /> ✓ الاسم: <strong>{playerVerify.name}</strong></>
+                        ) : (
+                          <><XCircle className="h-4 w-4" /> ✗ معرف غير صالح</>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Catalogue */}
+                  {catalogue.length > 0 && (
+                    <div>
+                      <Label>الباقات المتاحة ({catalogue.length})</Label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
+                        {catalogue.map(cat => (
+                          <button
+                            key={cat.id}
+                            onClick={() => handleTestOrder(cat)}
+                            disabled={ordering || !playerVerify?.valid}
+                            className="rounded-md border p-2 hover:bg-accent transition-colors text-right disabled:opacity-50"
+                          >
+                            <div className="font-medium text-sm truncate">{cat.name}</div>
+                            <div className="text-xs text-green-600 font-bold">${cat.amount.toFixed(2)}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Order result */}
+                  {orderResult && (
+                    <div className={`rounded-lg p-3 text-sm ${
+                      orderResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-2">
+                        {orderResult.success ? (
+                          <><CheckCircle className="h-4 w-4 text-green-600" /> تم إنشاء الطلب</>
+                        ) : (
+                          <><AlertTriangle className="h-4 w-4 text-red-600" /> فشل الطلب</>
+                        )}
+                      </div>
+                      {orderResult.success && (
+                        <div className="space-y-1 font-mono text-xs">
+                          <div>Order ID: {orderResult.order?.order_id}</div>
+                          <div>Status: {orderResult._status?.status || orderResult.order?.status}</div>
+                          <div>Price: ${orderResult.order?.price}</div>
+                          {orderResult._status?.delivery_items && (
+                            <div className="text-green-700">Delivery: {JSON.stringify(orderResult._status.delivery_items)}</div>
+                          )}
+                        </div>
+                      )}
+                      {!orderResult.success && (
+                        <div className="text-red-600 text-xs">{orderResult.message}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {ordering && (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-6 w-6 animate-spin ml-2" />
+                      <span className="text-sm">جاري إنشاء الطلب...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

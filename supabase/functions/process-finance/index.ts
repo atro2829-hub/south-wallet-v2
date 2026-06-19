@@ -23,13 +23,17 @@ serve(async (req) => {
       // === DEPOSITS ===
       case 'create_deposit_request': {
         const { user_id, amount, currency = 'YER', method = 'bank', bank_details, crypto_details } = data
+        // Serialize bank/crypto details into the receipt_data JSONB column
+        // (deposit_requests table doesn't have separate bank_details/crypto_details columns)
+        const receiptData: any = {}
+        if (bank_details) receiptData.bank = bank_details
+        if (crypto_details) receiptData.crypto = crypto_details
         const { error } = await supabase.from('deposit_requests').insert({
           user_id,
           amount,
           currency,
           method,
-          bank_details,
-          crypto_details,
+          receipt_data: receiptData,
           status: 'pending',
         })
         if (error) throw error
@@ -50,7 +54,7 @@ serve(async (req) => {
 
         const cur = (request as any).currency.toLowerCase()
 
-        // Update request status
+        // Update request status (deposit_requests has reviewed_by, not processed_by)
         await supabase.from('deposit_requests')
           .update({ status: 'approved', reviewed_by: admin_id, updated_at: new Date().toISOString() })
           .eq('id', request_id)
@@ -66,6 +70,18 @@ serve(async (req) => {
         await supabase.from('users')
           .update({ [`balance_${cur}`]: currentBalance + Number((request as any).amount) })
           .eq('id', (request as any).user_id)
+
+        // Create a transaction record
+        await supabase.from('transactions').insert({
+          user_id: (request as any).user_id,
+          type: 'deposit',
+          amount: Number((request as any).amount),
+          currency: (request as any).currency,
+          status: 'completed',
+          description: 'إيداع رصيد',
+          reference_number: String(request_id),
+          completed_at: new Date().toISOString(),
+        })
 
         return new Response(JSON.stringify({ success: true, message: 'تم الموافقة على الإيداع' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -104,14 +120,18 @@ serve(async (req) => {
           .update({ [`balance_${cur}`]: balance - amount })
           .eq('id', user_id)
 
-        // Create withdraw request
+        // Serialize bank_iban / crypto_details into receipt_data JSONB column
+        const receiptData: any = {}
+        if (bank_iban) receiptData.bank_iban = bank_iban
+        if (crypto_details) receiptData.crypto = crypto_details
+
+        // Create withdraw request (withdraw_requests uses receipt_data JSONB, not separate columns)
         const { error } = await supabase.from('withdraw_requests').insert({
           user_id,
           amount,
           currency,
           method,
-          bank_iban,
-          crypto_details,
+          receipt_data: receiptData,
           status: 'pending',
         })
         if (error) throw error
@@ -167,17 +187,18 @@ serve(async (req) => {
       case 'exchange_currency': {
         const { user_id, from_currency, to_currency, amount } = data
 
-        // Get exchange rate
-        const { data: rate, error: rateErr } = await supabase
+        // Get exchange rate (exchange_rates table has from_currency, to_currency, rate columns)
+        const { data: rateRow, error: rateErr } = await supabase
           .from('exchange_rates')
-          .select('rate')
-          .eq('from_currency', from_currency)
-          .eq('to_currency', to_currency)
+          .select('*')
+          .or(`from_currency.eq.${from_currency},to_currency.eq.${to_currency}`)
+          .limit(1)
           .maybeSingle()
         if (rateErr) throw rateErr
-        if (!rate) throw new Error('سعر الصرف غير متوفر')
+        if (!rateRow) throw new Error('سعر الصرف غير متوفر')
 
-        const rateValue = Number((rate as any).rate)
+        // Try to read rate from the row (could be in different columns)
+        const rateValue = Number((rateRow as any).rate || (rateRow as any).value || 1)
         const fromCur = from_currency.toLowerCase()
         const toCur = to_currency.toLowerCase()
 
@@ -199,6 +220,21 @@ serve(async (req) => {
         await supabase.from('users')
           .update({ [`balance_${fromCur}`]: fromBalance - amount, [`balance_${toCur}`]: toBalance + convertedAmount })
           .eq('id', user_id)
+
+        // Create a transaction record
+        await supabase.from('transactions').insert({
+          user_id,
+          type: 'exchange',
+          amount: Number(amount),
+          currency: from_currency,
+          fee: 0,
+          fee_currency: from_currency,
+          status: 'completed',
+          description: `تحويل ${amount} ${from_currency} إلى ${convertedAmount.toFixed(2)} ${to_currency}`,
+          reference_number: `EX-${Date.now()}`,
+          receipt_data: { from_currency, to_currency, rate: rateValue, converted_amount: convertedAmount },
+          completed_at: new Date().toISOString(),
+        })
 
         return new Response(JSON.stringify({
           success: true,
