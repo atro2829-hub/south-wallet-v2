@@ -183,9 +183,18 @@ const quickActions = [
 ];
 
 // Fixed utility services that are app features, not from DB
+// FIX: added escrow + investment + deposit + withdraw + usdt + exchange
+// so they always appear on home regardless of DB sections state.
 const utilityServices = [
-  { id: 'transfer', label: 'تحويل الأموال', iconKey: 'transfer', screenType: 'transfer' as const },
+  { id: 'transfer', label: 'تحويل', iconKey: 'transfer', screenType: 'transfer' as const },
   { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' as const },
+  { id: 'deposit', label: 'إيداع', iconKey: 'deposit', screenType: 'deposit' as const },
+  { id: 'withdraw', label: 'سحب', iconKey: 'withdraw', screenType: 'withdraw' as const },
+  { id: 'escrow', label: 'وسيط وضمان', iconKey: 'shield', screenType: 'escrow' as const },
+  { id: 'investment', label: 'استثمار', iconKey: 'trending-up', screenType: 'investment' as const },
+  { id: 'usdt', label: 'USDT', iconKey: 'bitcoin', screenType: 'usdt' as const },
+  { id: 'exchange', label: 'صرافة', iconKey: 'arrow-left-right', screenType: 'exchange' as const },
+  { id: 'support', label: 'الدعم', iconKey: 'support', screenType: 'support' as const },
 ];
 
 // NOTE: Static promo items removed — banners are now fully dynamic from the
@@ -1286,8 +1295,11 @@ export default function HomeScreen() {
             // Icon resolution priority: firebaseIcon → lucide icon → custom SVG → fallback icon maps → colored square
             // NO emoji rendering - all icons use Lucide or custom SVGs with app theme colors
             const fallbackIconSrc = productIcons[service.iconKey] || serviceIcons[service.iconKey];
-            const sectionColor = service.color || '#5C1A1B';
-            const iconBgColor = sectionColor + '15'; // soft background matching icon color
+            // FIX: force maroon (#5C1A1B) for all section icons to unify
+            // the visual identity with the app's brand color, regardless of
+            // any custom color the admin set on the section row.
+            const sectionColor = '#5C1A1B';
+            const iconBgColor = sectionColor + '15'; // soft maroon background
             // Determine icon to render
             const hasFirebaseIcon = !!service.firebaseIcon;
             const iconIsLucide = service.iconType === 'lucide' && service.icon;

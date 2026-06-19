@@ -119,26 +119,28 @@ export default function DepositPanel() {
     if (depErr) throw depErr;
 
     // 2) Add the amount to the user's balance (snake_case columns)
-    if (deposit.userId && deposit.amount) {
+    // FIX: deposit.user_id (snake_case) not deposit.userId (camelCase)
+    const userId = deposit.user_id || deposit.userId;
+    if (userId && deposit.amount) {
       const balanceCol = `balance_${(deposit.currency || 'YER').toLowerCase()}`;
       const { data: u } = await supabaseAdmin.from('users')
-        .select(balanceCol).eq('id', deposit.userId).maybeSingle();
+        .select(balanceCol).eq('id', userId).maybeSingle();
       const current = Number(u?.[balanceCol] || 0);
       const { error: balErr } = await supabaseAdmin.from('users')
         .update({ [balanceCol]: current + Number(deposit.amount), updated_at: new Date().toISOString() })
-        .eq('id', deposit.userId);
+        .eq('id', userId);
       if (balErr) console.warn('[approve] balance update failed:', balErr.message);
     }
 
     // 3) Record in transactions table
     try {
       await supabaseAdmin.from('transactions').insert({
-        user_id: deposit.userId,
+        user_id: userId,
         amount: Number(deposit.amount),
         currency: deposit.currency || 'YER',
         type: 'deposit',
         status: 'completed',
-        description: `إيداع ${deposit.method === 'crypto' ? 'عملات رقمية' : 'بنكي'} - ${deposit.userName || ''}`,
+        description: `إيداع ${deposit.method === 'crypto' ? 'عملات رقمية' : 'بنكي'} - ${deposit.user_name || deposit.userName || ''}`,
         reference_number: deposit.id,
         completed_at: new Date().toISOString(),
       });
@@ -147,14 +149,14 @@ export default function DepositPanel() {
     }
 
     // 4) Notify user + admin activity log
-    try { await notifyDepositStatus(deposit.userId, deposit.amount, deposit.currency || 'YER', 'approved'); } catch {}
+    try { await notifyDepositStatus(userId, deposit.amount, deposit.currency || 'YER', 'approved'); } catch {}
     try {
       await supabaseAdmin.from('activity_log').insert({
-        user_id: deposit.userId,
+        user_id: userId,
         action: 'approve_deposit',
         resource_type: 'deposit_request',
         resource_id: deposit.id,
-        details: `قبول إيداع ${deposit.amount} ${currencySymbols[deposit.currency || 'YER']} من ${deposit.userName}${reason ? ` (${reason})` : ''}`,
+        details: `قبول إيداع ${deposit.amount} ${currencySymbols[deposit.currency || 'YER']} من ${deposit.user_name || deposit.userName || ''}${reason ? ` (${reason})` : ''}`,
       });
     } catch {}
   };

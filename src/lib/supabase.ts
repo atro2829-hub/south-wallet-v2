@@ -749,8 +749,9 @@ export const supabaseService = {
   },
 
   // --- Service Providers ---
+  // FIX: also filter by is_visible so admin can hide providers from users
   async getServiceProviders(sectionId?: string) {
-    let query = supabase.from('service_providers').select('*').eq('is_active', true).order('sort_order');
+    let query = supabase.from('service_providers').select('*').eq('is_active', true).eq('is_visible', true).order('sort_order');
     if (sectionId) query = query.eq('section_id', sectionId);
     const { data, error } = await query;
     if (error) throw error;
@@ -772,18 +773,21 @@ export const supabaseService = {
   },
 
   // --- API Categories ---
+  // FIX: also filter by is_visible so admin can hide categories
   async getApiCategories(providerId: string) {
-    const { data, error } = await supabase.from('api_categories').select('*').eq('api_provider_id', providerId).eq('is_active', true);
+    const { data, error } = await supabase.from('api_categories').select('*').eq('api_provider_id', providerId).eq('is_active', true).eq('is_visible', true);
     if (error) throw error;
     return data as DbApiCategory[];
   },
 
   // --- API Games (من الجدول المخصص للألعاب) ---
+  // FIX: also filter by is_visible so admin can hide games
   async getApiGames(providerId?: string, featured?: boolean) {
     let query = supabase
       .from('api_games')
       .select('*')
       .eq('is_active', true)
+      .eq('is_visible', true)
       .order('sort_order');
     if (providerId) query = query.eq('api_provider_id', providerId);
     if (featured) query = query.eq('is_featured', true);

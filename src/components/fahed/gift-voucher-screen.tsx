@@ -381,83 +381,138 @@ export default function GiftVoucherScreen() {
                   setIsRedeeming(true);
                   setRedeemResult(null);
                   try {
-                    // Search for the gift code in Firebase
-                    const codesRef = ref(database, 'userGiftCodes');
-                    const snapshot = await get(codesRef);
-                    if (!snapshot.exists()) {
-                      setRedeemResult({ success: false, message: 'كود القسيمة غير صالح' });
-                      setIsRedeeming(false);
-                      return;
-                    }
-                    const data = snapshot.val();
-                    let foundCode: UserGiftCode | null = null;
-                    let foundCodeId: string | null = null;
-                    for (const [id, val] of Object.entries(data)) {
-                      const code = val as UserGiftCode;
-                      if (code.code === redeemCode.trim() && code.status === 'active') {
-                        foundCode = { ...code, id };
-                        foundCodeId = id;
-                        break;
+                    const code = redeemCode.trim().toUpperCase();
+                    const userId = user.userId || user.id;
+
+                    // FIX: First try the admin-generated gift_codes table.
+                    // This is where codes created by the admin live.
+                    // The old code only searched userGiftCodes (peer-to-peer
+                    // vouchers) and never found admin codes.
+                    const { supabase } = await import('@/lib/supabase');
+                    const { data: adminCode, error: adminErr } = await supabase
+                      .from('gift_codes')
+                      .select('*')
+                      .eq('code', code)
+                      .eq('is_active', true)
+                      .maybeSingle();
+
+                    if (adminCode && !adminErr) {
+                      // Check if already used
+                      if (adminCode.status === 'redeemed' || (adminCode.max_uses && adminCode.used_count >= adminCode.max_uses)) {
+                        setRedeemResult({ success: false, message: 'هذا الكود مستخدم بالفعل أو وصل للحد الأقصى' });
+                        setIsRedeeming(false);
+                        return;
                       }
-                    }
-                    if (!foundCode || !foundCodeId) {
-                      setRedeemResult({ success: false, message: 'كود القسيمة غير صالح أو مستخدم بالفعل' });
+                      // Check expiry
+                      if (adminCode.expires_at && new Date(adminCode.expires_at) < new Date()) {
+                        setRedeemResult({ success: false, message: 'انتهت صلاحية هذا الكود' });
+                        setIsRedeeming(false);
+                        return;
+                      }
+
+                      // Atomically mark as redeemed + increment used_count
+                      const { error: updateErr } = await supabase
+                        .from('gift_codes')
+                        .update({
+                          status: adminCode.max_uses && adminCode.used_count + 1 >= adminCode.max_uses ? 'redeemed' : 'active',
+                          used_count: (adminCode.used_count || 0) + 1,
+                          redeemed_by: userId,
+                          redeemed_at: new Date().toISOString(),
+                        })
+                        .eq('id', adminCode.id);
+
+                      if (updateErr) {
+                        setRedeemResult({ success: false, message: 'فشل استرداد الكود: ' + updateErr.message });
+                        setIsRedeeming(false);
+                        return;
+                      }
+
+                      // Credit the user's balance via atomic RPC
+                      const codeCurrency = adminCode.currency || 'YER';
+                      try {
+                        const { supabaseService } = await import('@/lib/supabase');
+                        await supabaseService.updateBalance(userId, codeCurrency, Number(adminCode.amount), 'add');
+                      } catch (e) {
+                        console.warn('[redeem] balance update failed:', e);
+                      }
+
+                      // Record transaction
+                      try {
+                        await supabase.from('transactions').insert({
+                          user_id: userId,
+                          amount: Number(adminCode.amount),
+                          currency: codeCurrency,
+                          type: 'deposit',
+                          status: 'completed',
+                          description: `استرداد كود هدية: ${code}`,
+                          reference_number: adminCode.id,
+                          completed_at: new Date().toISOString(),
+                        });
+                      } catch (e) {
+                        console.warn('[redeem] transaction log failed:', e);
+                      }
+
+                      setRedeemResult({
+                        success: true,
+                        message: `تم استرداد الكود بنجاح! +${adminCode.amount} ${codeCurrency}`,
+                      });
+                      setRedeemCode('');
                       setIsRedeeming(false);
                       return;
                     }
-                    if (foundCode.creatorUid === user.id) {
-                      setRedeemResult({ success: false, message: 'لا يمكنك استرداد قسيمتك الخاصة' });
+
+                    // Fall back to peer-to-peer user_gift_codes
+                    const { data: userCodes } = await supabase
+                      .from('user_gift_codes')
+                      .select('*')
+                      .eq('code', code)
+                      .eq('status', 'active')
+                      .maybeSingle();
+
+                    if (userCodes) {
+                      if (userCodes.creator_uid === userId) {
+                        setRedeemResult({ success: false, message: 'لا يمكنك استرداد قسيمتك الخاصة' });
+                        setIsRedeeming(false);
+                        return;
+                      }
+                      // Mark as redeemed
+                      await supabase.from('user_gift_codes').update({
+                        status: 'redeemed',
+                        redeemed_by: userId,
+                        redeemed_at: new Date().toISOString(),
+                      }).eq('id', userCodes.id);
+
+                      // Credit balance
+                      const codeCurrency = userCodes.currency || 'YER';
+                      try {
+                        const { supabaseService } = await import('@/lib/supabase');
+                        await supabaseService.updateBalance(userId, codeCurrency, Number(userCodes.amount), 'add');
+                      } catch {}
+
+                      try {
+                        await supabase.from('transactions').insert({
+                          user_id: userId,
+                          amount: Number(userCodes.amount),
+                          currency: codeCurrency,
+                          type: 'deposit',
+                          status: 'completed',
+                          description: `استرداد قسيمة هدية من ${userCodes.creator_name || 'مستخدم'}`,
+                          reference_number: userCodes.id,
+                          completed_at: new Date().toISOString(),
+                        });
+                      } catch {}
+
+                      setRedeemResult({
+                        success: true,
+                        message: `تم استرداد القسيمة بنجاح! +${userCodes.amount} ${codeCurrency}`,
+                      });
+                      setRedeemCode('');
                       setIsRedeeming(false);
                       return;
                     }
-                    const codeCurrency = foundCode.currency || 'YER';
-                    const balanceField = codeCurrency === 'YER' ? 'balanceYER' : codeCurrency === 'SAR' ? 'balanceSAR' : 'balanceUSD';
-                    const currentBalance = (user[balanceField] as number) || 0;
-                    const updates: Record<string, unknown> = {};
-                    updates[`userGiftCodes/${foundCodeId}/status`] = 'redeemed';
-                    updates[`userGiftCodes/${foundCodeId}/redeemedBy`] = user.id;
-                    updates[`userGiftCodes/${foundCodeId}/redeemedAt`] = new Date().toISOString();
-                    // Use runTransaction for balance credit to avoid race conditions
-                    const redeemTxResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
-                      return (currentVal || 0) + foundCode.amount;
-                    });
-                    const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-                    updates[`transactions/${txId}`] = {
-                      id: txId, fromUserId: foundCode.creatorUid, toUserId: user.id,
-                      amount: foundCode.amount, currency: codeCurrency, type: 'deposit',
-                      status: 'completed', description: `استرداد قسيمة هدية من ${foundCode.creatorName}`,
-                      createdAt: new Date().toISOString(),
-                    };
-                    await update(ref(database), updates);
-                    setUser({ ...user, [balanceField]: redeemTxResult.committed ? redeemTxResult.snapshot.val() : currentBalance + foundCode.amount });
 
-                    // Send FCM push notification to redeemer
-                    try {
-                      const { sendNotificationToUser } = await import('@/lib/notifications');
-                      await sendNotificationToUser(user.id, {
-                        title: 'تم استرداد القسيمة!',
-                        body: `تم إضافة ${foundCode.amount} ${currencySymbols[codeCurrency]} إلى رصيدك`,
-                        type: 'transaction',
-                        data: { action: 'gift_code_redeemed', amount: String(foundCode.amount), currency: codeCurrency },
-                      });
-                      // Notify the creator that their gift code was redeemed
-                      await sendNotificationToUser(foundCode.creatorUid, {
-                        title: 'تم استرداد قسيمة الهدية',
-                        body: `تم استرداد قسيمتك بمبلغ ${foundCode.amount} ${currencySymbols[codeCurrency]} بواسطة ${user.name || 'مستخدم'}`,
-                        type: 'transaction',
-                        data: { action: 'gift_code_used', amount: String(foundCode.amount), currency: codeCurrency },
-                      });
-                    } catch (notifErr) {
-                      console.warn('Gift code redeem notification failed:', notifErr);
-                    }
-
-                    addNotification({
-                      id: `gift-redeem-${Date.now()}`, title: 'تم استرداد القسيمة!',
-                      body: `تم إضافة ${foundCode.amount} ${currencySymbols[codeCurrency]} إلى رصيدك`,
-                      type: 'transaction', isRead: false, createdAt: new Date().toISOString(),
-                    });
-                    setRedeemResult({ success: true, message: `تم إضافة ${foundCode.amount} ${currencySymbols[codeCurrency]} إلى رصيدك بنجاح!` });
-                    setRedeemCode('');
+                    setRedeemResult({ success: false, message: 'كود القسيمة غير صالح أو مستخدم بالفعل' });
+                    setIsRedeeming(false);
                   } catch (error) {
                     console.error('Error redeeming code:', error);
                     setRedeemResult({ success: false, message: 'حدث خطأ أثناء استرداد القسيمة' });

@@ -40,6 +40,7 @@ import ApiProvidersPanel from '@/components/admin/api-providers-panel';
 import ApiSyncPanel from '@/components/admin/api-sync-panel';
 import PriceCustomizationPanel from '@/components/admin/price-customization-panel';
 import UsdtPanel from '@/components/admin/usdt-panel';
+import MaintenancePanel from '@/components/admin/maintenance-panel';
 import { Menu, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
@@ -81,6 +82,7 @@ const panelMap: Record<string, React.ComponentType> = {
   'api-sync': ApiSyncPanel,
   'price-customization': PriceCustomizationPanel,
   usdt: UsdtPanel,
+  maintenance: MaintenancePanel,
 };
 
 export default function AdminApp() {

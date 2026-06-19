@@ -66,16 +66,18 @@ export default function OrdersPanel() {
         })
         .eq('id', selectedOrder.id);
       if (error) throw error;
+      // FIX: use selectedOrder.user_id (snake_case) not selectedOrder.userId
+      const userId = selectedOrder.user_id || selectedOrder.userId;
       try {
-        await notifyOrderStatus(selectedOrder.userId, selectedOrder.id, newStatus);
+        if (userId) await notifyOrderStatus(userId, selectedOrder.id, newStatus);
       } catch {}
       try {
         await supabaseAdmin.from('activity_log').insert({
-          user_id: selectedOrder.userId,
+          user_id: userId,
           action: newStatus === 'completed' ? 'complete_order' : newStatus === 'failed' ? 'fail_order' : 'process_order',
           resource_type: 'order',
           resource_id: selectedOrder.id,
-          details: `تغيير حالة طلب ${selectedOrder.packageName || selectedOrder.providerName} إلى ${newStatus}`,
+          details: `تغيير حالة طلب ${selectedOrder.package_name || selectedOrder.packageName || selectedOrder.provider_name || ''} إلى ${newStatus}`,
         });
       } catch {}
       showToast(`تم تحديث حالة الطلب`, 'success');
@@ -89,6 +91,47 @@ export default function OrdersPanel() {
     if (!selectedOrder) return;
     setProcessing(true);
     try {
+      // FIX: refund the user's balance atomically + notify + log transaction
+      const userId = selectedOrder.user_id || selectedOrder.userId;
+      const refundAmount = Number(selectedOrder.amount) || 0;
+      const refundCurrency = (selectedOrder.currency || 'USD').toUpperCase();
+
+      if (userId && refundAmount > 0) {
+        // Credit back via atomic RPC
+        try {
+          const { error: refundErr } = await supabaseAdmin.rpc('update_user_balance', {
+            p_user_id: userId,
+            p_currency: refundCurrency,
+            p_amount: refundAmount,
+            p_operation: 'add',
+          });
+          if (refundErr) console.warn('[refund] balance RPC failed:', refundErr.message);
+        } catch (e) {
+          console.warn('[refund] balance update exception:', e);
+        }
+
+        // Record refund transaction
+        try {
+          await supabaseAdmin.from('transactions').insert({
+            user_id: userId,
+            amount: refundAmount,
+            currency: refundCurrency,
+            type: 'refund',
+            status: 'completed',
+            description: `استرداد طلب ${selectedOrder.package_name || selectedOrder.packageName || ''}`,
+            reference_number: selectedOrder.id,
+            completed_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          console.warn('[refund] transaction log failed:', e);
+        }
+
+        // Notify user
+        try {
+          if (userId) await notifyOrderStatus(userId, selectedOrder.id, 'refunded');
+        } catch {}
+      }
+
       const { error } = await supabaseAdmin.from('orders')
         .update({
           status: 'refunded',
@@ -96,7 +139,7 @@ export default function OrdersPanel() {
         })
         .eq('id', selectedOrder.id);
       if (error) throw error;
-      showToast('تم استرداد المبلغ', 'success');
+      showToast('تم استرداد المبلغ للمستخدم', 'success');
       setDetailOpen(false);
     } catch (e: any) { showToast('حدث خطأ: ' + (e.message || ''), 'error'); }
     finally { setProcessing(false); }

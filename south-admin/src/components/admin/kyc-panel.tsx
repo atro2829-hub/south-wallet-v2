@@ -21,7 +21,7 @@ import { notifyKycStatus } from '@/lib/notifications';
 import { AdminHelpBox } from '@/components/admin/admin-help-box';
 
 export default function KYCPanel() {
-  const { adminUser, showToast, kycPendingUsers, dataLoaded } = useAdminStore();
+  const { adminUser, showToast, kycPendingUsers, dataLoaded, setKycPendingUsers } = useAdminStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState<any>(null);
@@ -30,6 +30,24 @@ export default function KYCPanel() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [kycDocs, setKycDocs] = useState<any[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
+
+  // Refresh the KYC pending users list from Supabase after approve/reject
+  const refreshPendingUsers = useCallback(async () => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .select('id, email, phone, display_name, first_name, role, kyc_status, national_id, card_type, card_number, card_issued_at, governorate, id_rejection_reason, id_verified_at, created_at')
+        .in('kyc_status', ['submitted', 'verified', 'rejected'])
+        .order('updated_at', { ascending: false });
+      if (error) {
+        console.error('[KYCPanel] refresh error:', error);
+        return;
+      }
+      setKycPendingUsers(data || []);
+    } catch (e) {
+      console.error('[KYCPanel] refresh exception:', e);
+    }
+  }, [setKycPendingUsers]);
 
   // Fetch KYC documents from Supabase (kyc_documents table) whenever a user is
   // selected in the detail dialog. The previous implementation tried to read
@@ -89,53 +107,78 @@ export default function KYCPanel() {
 
   const stats = useMemo(() => ({
     total: kycPendingUsers.length,
-    submitted: kycPendingUsers.filter((u: any) => u.kycStatus === 'submitted').length,
-    verified: kycPendingUsers.filter((u: any) => u.kycStatus === 'verified').length,
-    rejected: kycPendingUsers.filter((u: any) => u.kycStatus === 'rejected').length,
+    submitted: kycPendingUsers.filter((u: any) => (u.kyc_status || u.kycStatus) === 'submitted').length,
+    verified: kycPendingUsers.filter((u: any) => (u.kyc_status || u.kycStatus) === 'verified').length,
+    rejected: kycPendingUsers.filter((u: any) => (u.kyc_status || u.kycStatus) === 'rejected').length,
   }), [kycPendingUsers]);
 
+  // FIX: use supabaseAdmin directly instead of db-compat (which was reading
+  // selected.uid = undefined). The users table uses snake_case columns:
+  // id (UUID), kyc_status, national_id, card_type, id_rejection_reason, etc.
   const handleApprove = async () => {
     if (!selected) return;
+    const userId = selected.id || selected.uid; // support both for safety
+    if (!userId) { showToast('معرف المستخدم غير موجود', 'error'); return; }
     try {
-      // Update Supabase users table with snake_case fields
-      await update(ref(database, `users/${selected.uid}`), {
-        kyc_status: 'verified',
-        id_verified_at: new Date().toISOString(),
-        id_verified_by: adminUser?.uid || null,
-        id_rejection_reason: '',
-        updated_at: new Date().toISOString(),
-      });
-      try { await notifyKycStatus(selected.uid, 'verified'); } catch {}
-      await push(ref(database, 'ownerSettings/activityLog'), {
-        id: generateId(), type: 'admin', action: 'توثيق حساب',
-        details: `توثيق هوية ${selected.name || selected.email}`,
-        adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
-      });
+      const { error } = await supabaseAdmin
+        .from('users')
+        .update({
+          kyc_status: 'verified',
+          id_verified_at: new Date().toISOString(),
+          id_verified_by: adminUser?.uid || null,
+          id_rejection_reason: '',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+      if (error) throw error;
+      try { await notifyKycStatus(userId, 'verified'); } catch {}
+      // Log to activity_log (Supabase) instead of Firebase ownerSettings/activityLog
+      try {
+        await supabaseAdmin.from('activity_log').insert({
+          user_id: userId,
+          action: 'kyc_approved',
+          resource_type: 'user',
+          resource_id: userId,
+          details: { admin_id: adminUser?.uid, admin_name: adminUser?.displayName, user_name: selected.name || selected.email },
+        });
+      } catch {}
       showToast('تم توثيق الحساب', 'success');
       handleDialogChange(false);
-    } catch { showToast('حدث خطأ', 'error'); }
+      // Refresh list
+      refreshPendingUsers();
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const handleReject = async () => {
     if (!selected) return;
+    const userId = selected.id || selected.uid;
+    if (!userId) { showToast('معرف المستخدم غير موجود', 'error'); return; }
     try {
-      // Update Supabase users table with snake_case fields + rejection reason
-      await update(ref(database, `users/${selected.uid}`), {
-        kyc_status: 'rejected',
-        id_rejection_reason: reason || '',
-        id_verified_at: new Date().toISOString(),
-        id_verified_by: adminUser?.uid || null,
-        updated_at: new Date().toISOString(),
-      });
-      try { await notifyKycStatus(selected.uid, 'rejected'); } catch {}
-      await push(ref(database, 'ownerSettings/activityLog'), {
-        id: generateId(), type: 'admin', action: 'رفض توثيق',
-        details: `رفض توثيق هوية ${selected.name || selected.email}${reason ? ` - ${reason}` : ''}`,
-        adminId: adminUser?.uid, adminName: adminUser?.displayName, timestamp: new Date().toISOString(),
-      });
+      const { error } = await supabaseAdmin
+        .from('users')
+        .update({
+          kyc_status: 'rejected',
+          id_rejection_reason: reason || '',
+          id_verified_at: new Date().toISOString(),
+          id_verified_by: adminUser?.uid || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+      if (error) throw error;
+      try { await notifyKycStatus(userId, 'rejected'); } catch {}
+      try {
+        await supabaseAdmin.from('activity_log').insert({
+          user_id: userId,
+          action: 'kyc_rejected',
+          resource_type: 'user',
+          resource_id: userId,
+          details: { admin_id: adminUser?.uid, admin_name: adminUser?.displayName, user_name: selected.name || selected.email, reason },
+        });
+      } catch {}
       showToast('تم رفض التوثيق', 'success');
       handleDialogChange(false);
-    } catch { showToast('حدث خطأ', 'error'); }
+      refreshPendingUsers();
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
   };
 
   const statusLabel: Record<string, string> = { submitted: 'مقدم', verified: 'موثق', rejected: 'مرفوض', none: 'لم يقدم' };
@@ -240,19 +283,19 @@ export default function KYCPanel() {
           </motion.div>
         ) : (
           filtered.map((user: any, i: number) => (
-            <motion.div key={user.uid} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
-              <Card className={cn('border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer card-press', user.kycStatus === 'submitted' && 'ring-1 ring-yellow-500/20')} onClick={() => { setSelected(user); setDetailOpen(true); setReason(''); }}>
+            <motion.div key={user.id || user.uid || i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
+              <Card className={cn('border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer card-press', (user.kyc_status || user.kycStatus) === 'submitted' && 'ring-1 ring-yellow-500/20')} onClick={() => { setSelected(user); setDetailOpen(true); setReason(''); }}>
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-[#5C1A1B]/10 flex items-center justify-center text-[#5C1A1B] font-bold text-sm shrink-0">{(user.name || '?')[0]}</div>
+                      <div className="w-10 h-10 rounded-full bg-[#5C1A1B]/10 flex items-center justify-center text-[#5C1A1B] font-bold text-sm shrink-0">{(user.display_name || user.name || user.email || '?')[0]}</div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{user.name || user.email}</p>
-                        <p className="text-xs text-muted-foreground">{user.kycIdNumber || user.nationalId || user.cardNumber || '-'}</p>
+                        <p className="font-medium text-sm truncate">{user.display_name || user.name || user.email}</p>
+                        <p className="text-xs text-muted-foreground">{user.national_id || user.card_number || user.phone || '-'}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <Badge className={cn('text-[10px]', statusColor[user.kycStatus] || '')}>{statusLabel[user.kycStatus] || user.kycStatus}</Badge>
+                      <Badge className={cn('text-[10px]', statusColor[user.kyc_status || user.kycStatus] || '')}>{statusLabel[user.kyc_status || user.kycStatus] || user.kyc_status}</Badge>
                     </div>
                   </div>
                 </CardContent>
@@ -269,29 +312,29 @@ export default function KYCPanel() {
           {selected && (
             <div className="space-y-5">
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><Label className="text-muted-foreground">الاسم</Label><p className="font-medium mt-0.5">{selected.name || selected.firstName || '-'}</p></div>
-                <div><Label className="text-muted-foreground">البريد</Label><p className="font-medium mt-0.5 text-xs break-all">{selected.email || '-'}</p></div>
+                <div><Label className="text-muted-foreground">الاسم</Label><p className="font-medium mt-0.5">{selected.display_name || selected.name || selected.first_name || '-'}</p></div>
+                <div><Label className="text-muted-foreground">البريد</Label><p className="font-medium mt-0.5 text-xs break-all">{selected.email || selected.phone || '-'}</p></div>
               </div>
 
               <div className="rounded-xl p-4 bg-muted/30 space-y-3">
                 <h4 className="text-sm font-bold flex items-center gap-2"><CreditCard size={16} className="text-[#5C1A1B]" />بيانات الوثيقة</h4>
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div><Label className="text-muted-foreground">نوع الوثيقة</Label><p className="font-medium mt-0.5">{selected.cardType || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">رقم البطاقة</Label><p className="font-medium mt-0.5" dir="ltr">{selected.kycIdNumber || selected.cardNumber || selected.nationalId || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">مكان الإصدار</Label><p className="font-medium mt-0.5">{selected.cardIssuedAt || '-'}</p></div>
+                  <div><Label className="text-muted-foreground">نوع الوثيقة</Label><p className="font-medium mt-0.5">{selected.card_type || '-'}</p></div>
+                  <div><Label className="text-muted-foreground">رقم البطاقة</Label><p className="font-medium mt-0.5" dir="ltr">{selected.national_id || selected.card_number || '-'}</p></div>
+                  <div><Label className="text-muted-foreground">مكان الإصدار</Label><p className="font-medium mt-0.5">{selected.card_issued_at || '-'}</p></div>
                   <div><Label className="text-muted-foreground">المحافظة</Label><p className="font-medium mt-0.5">{selected.governorate || '-'}</p></div>
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
                 <Label className="text-muted-foreground">الحالة</Label>
-                <Badge className={statusColor[selected.kycStatus]}>{statusLabel[selected.kycStatus]}</Badge>
+                <Badge className={statusColor[selected.kyc_status || selected.kycStatus]}>{statusLabel[selected.kyc_status || selected.kycStatus]}</Badge>
               </div>
 
-              {selected.kycStatus === 'rejected' && selected.kycRejectReason && (
+              {(selected.kyc_status || selected.kycStatus) === 'rejected' && (selected.id_rejection_reason || selected.kycRejectReason) && (
                 <div className="rounded-xl p-3 bg-red-500/10 border border-red-500/20">
                   <Label className="text-red-500 text-xs">سبب الرفض</Label>
-                  <p className="text-sm mt-1">{selected.kycRejectReason}</p>
+                  <p className="text-sm mt-1">{selected.id_rejection_reason || selected.kycRejectReason}</p>
                 </div>
               )}
 
