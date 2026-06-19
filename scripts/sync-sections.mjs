@@ -98,6 +98,10 @@ async function main() {
     banners,
     banks,
     exchange_rates,
+    // New: unified catalog tables (QT.GAME)
+    global_games,
+    global_packages,
+    provider_products,
   ] = await Promise.all([
     fetchAll('sections'),
     fetchAll('sub_sections'),
@@ -114,6 +118,10 @@ async function main() {
     fetchAll('banners'),
     fetchAll('banks'),
     fetchAll('exchange_rates', 'updated_at'),
+    // New unified catalog
+    fetchAll('global_games', 'is_pinned'),
+    fetchAll('global_packages', 'unit_amount'),
+    fetchAll('provider_products', 'cost_price'),
   ]);
 
   const payload = {
@@ -136,6 +144,10 @@ async function main() {
         banners: banners.length,
         banks: banks.length,
         exchange_rates: exchange_rates.length,
+        // New
+        global_games: global_games.length,
+        global_packages: global_packages.length,
+        provider_products: provider_products.length,
       },
     },
     sections,
@@ -153,6 +165,10 @@ async function main() {
     banners,
     banks,
     exchange_rates,
+    // New: unified catalog (QT.GAME)
+    global_games,
+    global_packages,
+    provider_products,
   };
 
   await mkdir(dirname(OUT_FILE), { recursive: true });
