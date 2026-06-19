@@ -107,6 +107,7 @@ function GamesScreenInner() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [providerId, setProviderId] = useState<string>('');
+  const [provider, setProvider] = useState<ApiProvider | null>(null);
   const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
 
   // Load games from active API provider (Supabase)
@@ -181,6 +182,21 @@ function GamesScreenInner() {
       cancelled = true;
     };
   }, [categories]);
+
+  // Load provider details when providerId changes (for markup display)
+  useEffect(() => {
+    if (!providerId) { setProvider(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await getApiProvider(providerId);
+        if (!cancelled) setProvider(p);
+      } catch (e) {
+        console.error('[games] Failed to load provider:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [providerId]);
 
   const filteredGames = (games || []).filter(g =>
     g.enabled !== false &&
@@ -413,9 +429,16 @@ function GamePurchaseView({
       return;
     }
 
-    if (hasUserIdField && playerValid && !playerValid.valid) {
-      toast.error('يرجى التحقق من معرف اللاعب أولاً');
-      return;
+    // CRITICAL: require player verification BEFORE purchase for games with userid field
+    if (hasUserIdField) {
+      if (!playerValid) {
+        toast.error('يجب التحقق من معرف اللاعب أولاً قبل الشراء');
+        return;
+      }
+      if (!playerValid.valid) {
+        toast.error('معرف اللاعب غير صالح. لا يمكن إكمال الشراء');
+        return;
+      }
     }
 
     setPurchasing(true);
@@ -696,7 +719,7 @@ function GamePurchaseView({
                 }`}
               >
                 <span className="text-sm font-medium">{cat.name || 'باقة'}</span>
-                <span className="text-sm font-bold text-primary">${(cat.amount || 0).toFixed(2)}</span>
+                <span className="text-sm font-bold text-primary">${((cat.amount || 0) * (1 + (provider?.markupPercent || 10) / 100)).toFixed(2)}</span>
               </button>
             );
           })}
@@ -716,7 +739,7 @@ function GamePurchaseView({
           {purchasing ? (
             <><Loader2 className="h-4 w-4 animate-spin" /> جاري الشراء...</>
           ) : (
-            <><ShoppingCart className="h-4 w-4" /> شراء ${(selectedCatalogue.amount || 0).toFixed(2)}</>
+            <><ShoppingCart className="h-4 w-4" /> شراء ${((selectedCatalogue.amount || 0) * (1 + (provider?.markupPercent || 10) / 100)).toFixed(2)}</>
           )}
         </button>
       )}

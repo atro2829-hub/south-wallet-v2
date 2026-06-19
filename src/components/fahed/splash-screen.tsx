@@ -12,20 +12,91 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
   const [phase, setPhase] = useState<'loading' | 'logo' | 'name' | 'exiting'>('loading');
   const [progress, setProgress] = useState(0);
 
-  // Phase 1: Loading with progress bar (0-1500ms)
+  // Phase 1: Loading with REAL progress — actually fetches the build-time
+  // snapshot (/data/sections.json) and preloads critical resources before
+  // proceeding. This prevents the "incorrect sync" problem where the app
+  // renders with empty data and then gets bombarded with DB queries.
   useEffect(() => {
-    const loadDuration = 1500;
+    let cancelled = false;
     const startTime = Date.now();
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const pct = Math.min((elapsed / loadDuration) * 100, 100);
-      setProgress(pct);
-      if (pct >= 100) {
-        clearInterval(interval);
-        setPhase('logo');
+    const minDuration = 1200; // minimum 1.2s for visual polish
+
+    async function loadResources() {
+      const steps: Array<{ label: string; fn: () => Promise<void> }> = [
+        {
+          label: 'تحميل الهيكل',
+          fn: async () => {
+            // Fetch the build-time snapshot — this is instant (local file)
+            try {
+              const res = await fetch('/data/sections.json', { cache: 'force-cache' });
+              if (res.ok) {
+                const data = await res.json();
+                console.log('[splash] Loaded snapshot:', data._meta?.counts);
+              }
+            } catch {
+              console.warn('[splash] No snapshot file — will fetch from Supabase');
+            }
+          },
+        },
+        {
+          label: 'تحميل الأيقونات',
+          fn: async () => {
+            // Preload the service-icons module by importing it
+            try {
+              await import('@/lib/service-icons');
+            } catch {}
+          },
+        },
+        {
+          label: 'تحميل المنتجات',
+          fn: async () => {
+            // Preload the product-icons module
+            try {
+              await import('@/lib/product-icons');
+            } catch {}
+          },
+        },
+        {
+          label: 'تهيئة المحفظة',
+          fn: async () => {
+            // Preload the supabase client
+            try {
+              await import('@/lib/supabase');
+            } catch {}
+          },
+        },
+      ];
+
+      const stepWeight = 100 / steps.length;
+      for (let i = 0; i < steps.length; i++) {
+        if (cancelled) return;
+        try {
+          await steps[i].fn();
+        } catch (e) {
+          console.warn(`[splash] Step "${steps[i].label}" failed:`, e);
+        }
+        // Update progress: each step contributes its weight
+        const stepProgress = (i + 1) * stepWeight;
+        const elapsed = Date.now() - startTime;
+        // Blend actual progress with time-based progress for smooth animation
+        const timeProgress = (elapsed / minDuration) * 100;
+        setProgress(Math.min(stepProgress, timeProgress, 100));
       }
-    }, 16);
-    return () => clearInterval(interval);
+
+      // Ensure minimum duration for visual polish
+      const elapsed = Date.now() - startTime;
+      if (elapsed < minDuration) {
+        await new Promise(r => setTimeout(r, minDuration - elapsed));
+      }
+
+      if (!cancelled) {
+        setProgress(100);
+        setTimeout(() => { if (!cancelled) setPhase('logo'); }, 200);
+      }
+    }
+
+    loadResources();
+    return () => { cancelled = true; };
   }, []);
 
   // Phase 2: Logo appears (1500ms)
