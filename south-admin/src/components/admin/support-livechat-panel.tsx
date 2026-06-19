@@ -85,7 +85,8 @@ export default function SupportLiveChatPanel() {
           .filter(m => m.chat_id === chat.id)
           .map(m => ({
             sender: m.sender_type as 'user' | 'admin',
-            text: m.content || '',
+            // FIX: column is `message`, not `content`
+            text: m.message || '',
             time: m.created_at || new Date().toISOString(),
             senderName: m.sender_type === 'admin' ? 'الدعم الفني' : ((chat as any).users?.display_name || 'مستخدم'),
           }));
@@ -108,7 +109,8 @@ export default function SupportLiveChatPanel() {
           messages: chatMessages,
           createdAt: chat.created_at || new Date().toISOString(),
           updatedAt: chat.updated_at || '',
-          assignedTo: chat.assigned_to || '',
+          // FIX: column is `admin_id`, not `assigned_to`
+          assignedTo: chat.admin_id || '',
         };
       });
 
@@ -148,7 +150,8 @@ export default function SupportLiveChatPanel() {
         if (selectedChat && payload.new.chat_id === selectedChat.id) {
           const newMsg: ChatMessage = {
             sender: payload.new.sender_type as 'user' | 'admin',
-            text: payload.new.content || '',
+            // FIX: column is `message`, not `content`
+            text: payload.new.message || '',
             time: payload.new.created_at || new Date().toISOString(),
             senderName: payload.new.sender_type === 'admin' ? 'الدعم الفني' : selectedChat.userName,
           };
@@ -188,22 +191,38 @@ export default function SupportLiveChatPanel() {
     if (!selectedChat || !message.trim()) return;
     setSending(true);
     try {
+      // FIX: column is `message`, not `content`. Also added required `sender_id`.
+      // sender_id can be the admin's user UUID (if admin is also a users row) or
+      // a sentinel UUID. We use the adminUser.uid if it's a valid UUID, else NULL
+      // (the column is nullable in the livechat schema — let me verify... actually
+      // looking at schema line 782, sender_id is NOT NULL. We need a valid UUID.
+      // Use a fixed admin sentinel UUID if adminUser.uid isn't a UUID.
+      const adminUuid = adminUser?.uid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(adminUser.uid)
+        ? adminUser.uid
+        : '00000000-0000-0000-0000-000000000001'; // sentinel for admin
+
       const { error } = await supabase
         .from('livechat_messages')
         .insert({
           chat_id: selectedChat.id,
+          sender_id: adminUuid,
           sender_type: 'admin',
           message_type: 'text',
-          content: message.trim(),
+          message: message.trim(),
+          is_read: false,
         });
 
       if (error) throw error;
 
-      // Update chat's assigned_to and updated_at
+      // FIX: column is `admin_id`, not `assigned_to`. Also update last_message.
       await supabase
         .from('support_livechat')
         .update({
-          assigned_to: adminUser?.uid || null,
+          admin_id: adminUuid,
+          status: 'active',
+          last_message: message.trim(),
+          last_message_at: new Date().toISOString(),
+          unread_user: (selectedChat.messages?.filter(m => m.sender === 'user' && !m.is_read).length || 0) + 1,
           updated_at: new Date().toISOString(),
         })
         .eq('id', selectedChat.id);
@@ -214,7 +233,7 @@ export default function SupportLiveChatPanel() {
       };
       setSelectedChat(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
       setMessage('');
-    } catch { showToast('حدث خطأ', 'error'); }
+    } catch (e: any) { showToast('حدث خطأ: ' + e.message, 'error'); }
     finally { setSending(false); }
   };
 

@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node ../scripts/sync-sections.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "sync:sections": "node ../scripts/sync-sections.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

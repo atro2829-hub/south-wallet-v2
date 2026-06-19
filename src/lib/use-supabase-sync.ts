@@ -425,7 +425,62 @@ export function useSupabaseSync() {
   //  Global data fetch (not user-specific)
   // ─────────────────────────────────────────────────────────
 
+  // FAST BOOT: Try to load the build-time JSON snapshot first.
+  // This lets the app render the structure (sections, providers, banners,
+  // investment plans, etc.) instantly without waiting for a Supabase
+  // round-trip. The full fetchGlobalData() still runs in the background
+  // to reconcile with the latest DB state (and Realtime subscriptions
+  // push admin changes immediately afterwards).
+  const loadBootSnapshot = useCallback(async () => {
+    try {
+      // In Capacitor, the file is served from capacitor://localhost/data/sections.json
+      // In dev, it's at /data/sections.json (relative to /public)
+      // If the prebuild script didn't run, the file is missing — fail silently.
+      const res = await fetch('/data/sections.json', { cache: 'force-cache' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data;
+    } catch {
+      // Network error or file missing — fall back to live fetch
+      return null;
+    }
+  }, []);
+
+  // Apply the boot snapshot immediately (synchronously if possible) so the
+  // first paint shows the structure. Then fetchGlobalData() reconciles.
+  const applyBootSnapshot = useCallback((snapshot: any) => {
+    if (!snapshot) return;
+    try {
+      if (snapshot.sections && Array.isArray(snapshot.sections)) {
+        const sections = snapshot.sections;
+        const categories = sections
+          .filter((s: any) => s.is_visible !== false)
+          .map(mapDbSectionToCategory);
+        setCategoriesRef.current(categories);
+        const sectionsMap: Record<string, any> = {};
+        for (const s of sections) sectionsMap[s.id] = s;
+        setFbSectionsRef.current(sectionsMap);
+      }
+      if (snapshot.service_providers && Array.isArray(snapshot.service_providers)) {
+        const providers = snapshot.service_providers.map(mapDbProviderToStore);
+        setProvidersRef.current(providers);
+      }
+      // banners, investment_plans, escrow_categories, usdt_categories are
+      // fetched on demand by their respective screens, so we don't need to
+      // pre-populate them here.
+      console.log('[SupabaseSync] Boot snapshot applied:',
+        snapshot._meta?.counts || 'no counts');
+    } catch (e) {
+      console.warn('[SupabaseSync] Boot snapshot apply failed:', e);
+    }
+  }, []);
+
   const fetchGlobalData = useCallback(async () => {
+    // 1. Try boot snapshot (instant)
+    const snapshot = await loadBootSnapshot();
+    if (snapshot) applyBootSnapshot(snapshot);
+
+    // 2. Then fetch live data (reconcile)
     try {
       // Fetch all global data in parallel for speed
       const [

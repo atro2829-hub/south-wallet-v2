@@ -88,6 +88,12 @@ export default function EscrowScreen() {
   const [formCurrency, setFormCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
   const [formRole, setFormRole] = useState<'buyer' | 'seller'>('buyer');
   const [formOtherPartyId, setFormOtherPartyId] = useState('');
+  // New: category for the escrow (digital-products, game-accounts, crypto, etc.)
+  const [formEscrowCategory, setFormEscrowCategory] = useState('');
+  // New: join code input (the other party enters this to join the escrow)
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  // New: list of escrow categories fetched from Supabase
+  const [escrowCategories, setEscrowCategories] = useState<Array<{id: string; name: string; icon: string; description: string}>>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [createdEscrowId, setCreatedEscrowId] = useState('');
@@ -185,6 +191,32 @@ export default function EscrowScreen() {
 
     return () => { if (unsubscribe) unsubscribe(); };
   }, [user?.id, user?.userId]);
+
+  // Fetch escrow categories from Supabase (admin-managed)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('escrow_categories')
+          .select('*')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true });
+        if (error) throw error;
+        if (!cancelled && data) {
+          setEscrowCategories(data.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            icon: c.icon || '📋',
+            description: c.description || '',
+          })));
+        }
+      } catch (e) {
+        console.warn('[escrow] categories fetch failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const activeEscrows = escrows.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
   const historyEscrows = escrows.filter(e => e.status === 'completed' || e.status === 'cancelled');
@@ -288,8 +320,20 @@ export default function EscrowScreen() {
   };
 
   // Create escrow
+  // FIX: rewritten to use Supabase escrow_transactions table directly.
+  // Old code used Firebase multi-path updates to `users/{uid}/escrows/{id}`
+  // which db-compat tried to write as columns on the `users` table → failed.
+  //
+  // NEW FLOW (3-party with join code):
+  //   1. Creator fills the form (title, description, amount, currency, category)
+  //   2. Creator chooses role: "I am the buyer" or "I am the seller"
+  //   3. System generates a 6-character join_code (e.g. "ESC4X7K")
+  //   4. Creator shares the code with the other party
+  //   5. Other party enters the code in the app → claims their role
+  //   6. Both parties + admin enter a 3-party group chat
+  //   7. Admin closes the deal (release or refund)
   const handleCreateEscrow = async () => {
-    if (!user?.id || !formTitle.trim() || !formAmount.trim() || !formOtherPartyId.trim()) return;
+    if (!user?.id || !formTitle.trim() || !formAmount.trim()) return;
 
     const amount = parseFloat(formAmount);
     if (isNaN(amount) || amount <= 0) return;
@@ -297,49 +341,45 @@ export default function EscrowScreen() {
     setIsProcessing(true);
 
     try {
-      const referenceCode = `ESC-${generateReference().slice(-8)}`;
-      const escrowId = `escrow-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      // Generate a 6-character join code (uppercase, no confusing chars)
+      const joinCode = generateReference()
+        .replace(/[^A-Z0-9]/gi, '')
+        .toUpperCase()
+        .substring(0, 6)
+        .padEnd(6, 'X');
 
-      const newEscrow: EscrowTransaction = {
-        id: escrowId,
-        title: formTitle.trim(),
-        description: formDescription.trim(),
-        amount,
-        currency: formCurrency,
-        buyerId: formRole === 'buyer' ? user.id : formOtherPartyId.trim(),
-        buyerName: formRole === 'buyer' ? (user.name || user.userId || '') : '',
-        sellerId: formRole === 'seller' ? user.id : formOtherPartyId.trim(),
-        sellerName: formRole === 'seller' ? (user.name || user.userId || '') : '',
-        status: 'pending',
-        buyerConfirmed: false,
-        sellerConfirmed: false,
-        createdBy: user.id,
-        createdAt: new Date().toISOString(),
-        referenceCode,
-      };
+      const userId = user.userId || user.id; // Supabase UUID
+      const userName = user.name || user.firstName || user.phone || 'مستخدم';
 
-      // Save to current user's escrows
-      const updates: Record<string, unknown> = {};
-      updates[`users/${user.id}/escrows/${escrowId}`] = newEscrow;
+      // Insert into escrow_transactions table directly via Supabase
+      const { data: escrowData, error: escrowError } = await supabase
+        .from('escrow_transactions')
+        .insert({
+          // Creator is buyer OR seller depending on formRole.
+          // The OTHER party's id is left NULL until they join via the code.
+          buyer_id: formRole === 'buyer' ? userId : null,
+          seller_id: formRole === 'seller' ? userId : null,
+          buyer_name: formRole === 'buyer' ? userName : '',
+          seller_name: formRole === 'seller' ? userName : '',
+          title: formTitle.trim(),
+          description: formDescription.trim(),
+          amount,
+          currency: formCurrency,
+          category: formEscrowCategory || '',
+          item_description: formDescription.trim(),
+          status: 'pending',
+          buyer_confirmed: false,
+          seller_confirmed: false,
+          reference_code: joinCode,
+          join_code: joinCode,
+          join_code_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+        })
+        .select()
+        .single();
 
-      // Try to save to other party's escrows too
-      const otherPartyId = formOtherPartyId.trim();
-      // Check if it's a userId format (starts with JN)
-      if (otherPartyId.startsWith('JN')) {
-        // Look up the Firebase UID for this userId
-        const userIdSnapshot = await get(ref(database, `userIds/${otherPartyId}`));
-        if (userIdSnapshot.exists()) {
-          const otherUid = userIdSnapshot.val();
-          updates[`users/${otherUid}/escrows/${escrowId}`] = newEscrow;
-        }
-      } else {
-        // Might be a direct UID
-        updates[`users/${otherPartyId}/escrows/${escrowId}`] = newEscrow;
-      }
+      if (escrowError) throw escrowError;
 
-      await update(ref(database), updates);
-
-      setCreatedEscrowId(referenceCode);
+      setCreatedEscrowId(joinCode);
       setShowSuccess(true);
 
       // Reset form
@@ -349,22 +389,133 @@ export default function EscrowScreen() {
       setFormCurrency('YER');
       setFormRole('buyer');
       setFormOtherPartyId('');
+      setFormEscrowCategory('');
 
       addNotification({
         id: Date.now().toString(),
-        title: 'تم إنشاء الحوالة الوسيطة',
-        body: `تم إنشاء حوالة وسيطة بمبلغ ${amount.toLocaleString()} ${currencySymbols[formCurrency]}`,
+        title: 'تم إنشاء تذكرة الوسيط',
+        body: `رمز التذكرة: ${joinCode} — شاركه مع الطرف الآخر للموافقة`,
         type: 'info',
         isRead: false,
         createdAt: new Date().toISOString(),
       });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating escrow:', error);
       addNotification({
         id: Date.now().toString(),
         title: 'خطأ',
-        body: 'فشل في إنشاء الحوالة الوسيطة',
+        body: 'فشل في إنشاء تذكرة الوسيط: ' + (error.message || ''),
+        type: 'error',
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Join an existing escrow by code (the other party enters the 6-char code)
+  const handleJoinEscrow = async () => {
+    if (!user?.id || !joinCodeInput.trim()) return;
+    const code = joinCodeInput.trim().toUpperCase();
+    setIsProcessing(true);
+    try {
+      const userId = user.userId || user.id;
+      const userName = user.name || user.firstName || user.phone || 'مستخدم';
+
+      // Find the escrow by join_code
+      const { data: escrow, error: findErr } = await supabase
+        .from('escrow_transactions')
+        .select('*')
+        .eq('join_code', code)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
+      if (!escrow) {
+        addNotification({
+          id: Date.now().toString(),
+          title: 'رمز غير صالح',
+          body: 'لا توجد تذكرة وسيط بهذا الرمز',
+          type: 'error',
+          isRead: false,
+          createdAt: new Date().toISOString(),
+        });
+        setIsProcessing(false);
+        return;
+      }
+
+      // Check if user is already a party
+      if (escrow.buyer_id === userId || escrow.seller_id === userId) {
+        // Already a party — just navigate to it
+        setSelectedEscrow(escrow as any);
+        setView('detail');
+        setJoinCodeInput('');
+        setIsProcessing(false);
+        return;
+      }
+
+      // Determine which role to claim: the creator set one role; the joiner takes the other
+      const creatorIsBuyer = !!escrow.buyer_id;
+      const update: any = {};
+      if (creatorIsBuyer && !escrow.seller_id) {
+        update.seller_id = userId;
+        update.seller_name = userName;
+        update.seller_claimed_at = new Date().toISOString();
+      } else if (!creatorIsBuyer && !escrow.buyer_id) {
+        update.buyer_id = userId;
+        update.buyer_name = userName;
+        update.buyer_claimed_at = new Date().toISOString();
+      } else {
+        addNotification({
+          id: Date.now().toString(),
+          title: 'التذكرة مكتملة',
+          body: 'هذه التذكرة لها طرفان بالفعل',
+          type: 'error',
+          isRead: false,
+          createdAt: new Date().toISOString(),
+        });
+        setIsProcessing(false);
+        return;
+      }
+
+      const { error: updateErr } = await supabase
+        .from('escrow_transactions')
+        .update(update)
+        .eq('id', escrow.id);
+
+      if (updateErr) throw updateErr;
+
+      // Notify admin that an escrow transaction has started (both parties joined)
+      try {
+        const { sendNotificationToUser } = await import('@/lib/notifications');
+        // Send to admin (using owner email as admin)
+        // In production this should loop all admins; here we just log
+        console.log('[escrow] Both parties joined — notify admins');
+      } catch (e) {
+        console.warn('[escrow] admin notify failed:', e);
+      }
+
+      // Navigate to the escrow detail
+      const updated = { ...escrow, ...update };
+      setSelectedEscrow(updated as any);
+      setView('detail');
+      setJoinCodeInput('');
+
+      addNotification({
+        id: Date.now().toString(),
+        title: 'تم الانضمام للتذكرة',
+        body: `أصبحت طرفاً في تذكرة الوسيط ${code}`,
+        type: 'info',
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      console.error('Error joining escrow:', error);
+      addNotification({
+        id: Date.now().toString(),
+        title: 'خطأ',
+        body: 'فشل الانضمام: ' + (error.message || ''),
         type: 'error',
         isRead: false,
         createdAt: new Date().toISOString(),

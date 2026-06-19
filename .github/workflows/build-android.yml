@@ -74,6 +74,16 @@ jobs:
         run: npm ci --legacy-peer-deps --no-audit --no-fund
         timeout-minutes: 10
 
+      - name: Sync app structure from Supabase (prebuild)
+        # Runs scripts/sync-sections.mjs to fetch sections/sub_sections/
+        # service_providers/etc. and write them to public/data/sections.json
+        # so the APK bundles the structure for instant first paint.
+        run: npm run prebuild
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        continue-on-error: true  # don't fail the build if Supabase is unreachable
+
       - name: Remove ALL API routes (incompatible with static export)
         run: rm -rf src/app/api || true
 
@@ -162,6 +172,14 @@ jobs:
         # npm ci = deterministic install from package-lock.json (faster than npm install).
         run: npm ci --legacy-peer-deps --no-audit --no-fund
         timeout-minutes: 10
+
+      - name: Sync app structure from Supabase (prebuild)
+        working-directory: south-admin
+        run: npm run prebuild
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        continue-on-error: true
 
       - name: Build Next.js static export
         working-directory: south-admin

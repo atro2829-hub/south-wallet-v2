@@ -370,6 +370,10 @@ export default function SupportScreen() {
   });
 
   // ─── Create ticket ───
+  // FIX: removed non-existent columns (user_name, message) from support_tickets INSERT.
+  // The first user message goes into support_messages.message (correct column).
+  // Also removed sender_name, sender_role from support_messages INSERT.
+  // attachments is JSONB — wrap string in array.
   const handleCreateTicket = async () => {
     if (!newSubject || !newMessage || !user?.id) return;
     setCreatingTicket(true);
@@ -378,9 +382,8 @@ export default function SupportScreen() {
         .from('support_tickets')
         .insert({
           user_id: user.id,
-          user_name: user.name || 'مستخدم',
           subject: newSubject,
-          message: newMessage,
+          body: newMessage,
           category: newCategory,
           status: 'open',
           priority: 'medium',
@@ -397,10 +400,9 @@ export default function SupportScreen() {
           ticket_id: ticketData.id,
           sender_id: user.id,
           sender_type: 'user',
-          sender_name: user.name || 'مستخدم',
-          sender_role: 'user',
           message: newMessage,
-          attachments: newImage || null,
+          attachments: newImage ? [newImage] : [],
+          is_read: false,
         });
 
       if (msgError) throw msgError;
@@ -418,7 +420,6 @@ export default function SupportScreen() {
       });
 
       // Push-notify the admin team so they can respond promptly.
-      // This is fire-and-forget; a failure here should not break ticket creation.
       try {
         await notifySupportTicketCreated(user.id, user.name || 'مستخدم', ticketData.id, newSubject, newCategory);
       } catch (e) {
@@ -440,6 +441,7 @@ export default function SupportScreen() {
   };
 
   // ─── Send ticket message ───
+  // FIX: removed sender_name + sender_role (don't exist on support_messages).
   const handleSendMessage = async () => {
     if (!messageInput.trim() || !selectedTicket || !user || sendingMessage) return;
     const messageText = messageInput.trim();
@@ -451,9 +453,8 @@ export default function SupportScreen() {
           ticket_id: selectedTicket.id,
           sender_id: user.id,
           sender_type: 'user',
-          sender_name: user.name || 'مستخدم',
-          sender_role: 'user',
           message: messageText,
+          is_read: false,
         });
 
       if (error) throw error;
@@ -488,13 +489,19 @@ export default function SupportScreen() {
       let chatId = activeChatId;
 
       // Create a new chat if none exists
+      // FIX: removed `user_name` column (doesn't exist on support_livechat).
+      // Schema: user_id, admin_id, status, last_message, last_message_at,
+      //         unread_user, unread_admin, created_at, updated_at
       if (!chatId) {
         const { data: newChat, error: chatError } = await supabase
           .from('support_livechat')
           .insert({
             user_id: user.id,
-            user_name: user.name || 'مستخدم',
             status: 'waiting',
+            last_message: messageText || (imageToSend ? '📷 صورة' : ''),
+            last_message_at: new Date().toISOString(),
+            unread_user: 0,
+            unread_admin: 1,
           })
           .select()
           .single();
@@ -507,7 +514,8 @@ export default function SupportScreen() {
 
       // Insert message — use snake_case column names that match the schema:
       // livechat_messages columns: id, chat_id, sender_id, sender_type, message,
-      // message_type, attachments, is_read, created_at
+      // message_type, attachments (JSONB), is_read, created_at
+      // FIX: attachments is JSONB — wrap string in array.
       const { error: msgError } = await supabase
         .from('livechat_messages')
         .insert({
@@ -516,7 +524,7 @@ export default function SupportScreen() {
           sender_type: 'user',
           message: messageText || (imageToSend ? '📷 صورة' : ''),
           message_type: imageToSend ? 'image' : 'text',
-          attachments: imageToSend || null,
+          attachments: imageToSend ? [imageToSend] : [],
           is_read: false,
         });
 
@@ -532,10 +540,15 @@ export default function SupportScreen() {
       };
       setChatMessages(prev => [...prev, newMsg]);
 
-      // Update chat's updated_at
+      // Update chat's last_message + unread_admin count + timestamp
       await supabase
         .from('support_livechat')
-        .update({ updated_at: new Date().toISOString() })
+        .update({
+          last_message: messageText || (imageToSend ? '📷 صورة' : ''),
+          last_message_at: new Date().toISOString(),
+          unread_admin: (await supabase.from('support_livechat').select('unread_admin').eq('id', chatId).maybeSingle()).data?.unread_admin + 1 || 1,
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', chatId);
     } catch (e) {
       console.error('Failed to send chat message', e);
