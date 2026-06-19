@@ -448,19 +448,12 @@ export function useSupabaseSync() {
 
   // Apply the boot snapshot immediately (synchronously if possible) so the
   // first paint shows the structure. Then fetchGlobalData() reconciles.
+  // NOTE: sections are NOT loaded from snapshot — they are STATIC in code.
   const applyBootSnapshot = useCallback((snapshot: any) => {
     if (!snapshot) return;
     try {
-      if (snapshot.sections && Array.isArray(snapshot.sections)) {
-        const sections = snapshot.sections;
-        const categories = sections
-          .filter((s: any) => s.is_visible !== false)
-          .map(mapDbSectionToCategory);
-        setCategoriesRef.current(categories);
-        const sectionsMap: Record<string, any> = {};
-        for (const s of sections) sectionsMap[s.id] = s;
-        setFbSectionsRef.current(sectionsMap);
-      }
+      // Sections: SKIP — home-screen uses STATIC_SECTIONS hardcoded in code
+      // if (snapshot.sections ...) → REMOVED
       if (snapshot.service_providers && Array.isArray(snapshot.service_providers)) {
         const providers = snapshot.service_providers.map(mapDbProviderToStore);
         setProvidersRef.current(providers);
@@ -483,15 +476,21 @@ export function useSupabaseSync() {
     // 2. Then fetch live data (reconcile)
     try {
       // Fetch all global data in parallel for speed
+      // ====================================================================
+      // SECTIONS ARE NOW STATIC — hardcoded in home-screen.tsx (STATIC_SECTIONS).
+      // We DO NOT fetch sections from DB anymore. The admin controls content
+      // (providers, games, packages) via DB, but the section grid structure
+      // is fixed at build time.
+      // We still fetch: service_providers, exchange_rates, feature_flags,
+      // kill_switch, maintenance.
+      // ====================================================================
       const [
-        sectionsResult,
         providersResult,
         exchangeRatesResult,
         featureFlagsResult,
         killSwitchResult,
         maintenanceResult,
       ] = await Promise.allSettled([
-        supabaseService.getSections(),
         supabaseService.getServiceProviders(),
         supabaseService.getExchangeRates(),
         supabaseService.getFeatureFlags(),
@@ -499,19 +498,9 @@ export function useSupabaseSync() {
         supabaseService.getMaintenance(),
       ]);
 
-      // Sections → categories + fbSections
-      if (sectionsResult.status === 'fulfilled' && sectionsResult.value) {
-        const sections = sectionsResult.value;
-        const categories = sections.filter((s) => s.is_visible).map(mapDbSectionToCategory);
-        setCategoriesRef.current(categories);
-
-        // Also set raw fbSections for components that still use the old shape
-        const sectionsMap: Record<string, DbSection> = {};
-        for (const s of sections) {
-          sectionsMap[s.id] = s;
-        }
-        setFbSectionsRef.current(sectionsMap as Record<string, any>);
-      }
+      // Sections: set to EMPTY — home-screen uses STATIC_SECTIONS from code
+      setCategoriesRef.current([]);
+      setFbSectionsRef.current({});
 
       // Providers
       if (providersResult.status === 'fulfilled' && providersResult.value) {

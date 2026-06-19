@@ -182,16 +182,40 @@ const quickActions = [
   { id: 'deposit', label: 'إيداع', icon: HandCoins, color: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #D97706)' },
 ];
 
-// Fixed utility services that are APP FEATURES (not in the sections DB table).
-// These are wallet-level actions that don't belong to any category.
-// DB sections (recharge, games, usdt, escrow, investment, exchange) are
-// rendered SEPARATELY from the sections table — do NOT duplicate them here.
-const utilityServices = [
-  { id: 'transfer', label: 'تحويل', iconKey: 'transfer', screenType: 'transfer' as const },
-  { id: 'deposit', label: 'إيداع', iconKey: 'deposit', screenType: 'deposit' as const },
-  { id: 'withdraw', label: 'سحب', iconKey: 'withdraw', screenType: 'withdraw' as const },
-  { id: 'support', label: 'الدعم', iconKey: 'support', screenType: 'support' as const },
+// =====================================================================
+// STATIC SECTIONS — hardcoded in code, NOT fetched from database.
+// The admin controls VISIBILITY and CONTENT via Supabase Realtime
+// (is_visible flags on service_providers, api_games, etc.) but the
+// section STRUCTURE itself is fixed at build time.
+// =====================================================================
+// Each section has: id, label, iconKey, screenType, color
+// The color is ALWAYS maroon #5C1A1B for visual unity.
+
+interface StaticSection {
+  id: string;
+  label: string;
+  iconKey: string;
+  screenType: string;
+  isUtility?: boolean; // true = wallet action, false = catalog section
+}
+
+const STATIC_SECTIONS: StaticSection[] = [
+  // ─── Wallet utilities (actions, not catalogs) ───
+  { id: 'transfer', label: 'تحويل', iconKey: 'transfer', screenType: 'transfer', isUtility: true },
+  { id: 'deposit', label: 'إيداع', iconKey: 'deposit', screenType: 'deposit', isUtility: true },
+  { id: 'withdraw', label: 'سحب', iconKey: 'withdraw', screenType: 'withdraw', isUtility: true },
+  { id: 'support', label: 'الدعم', iconKey: 'support', screenType: 'support', isUtility: true },
+  // ─── Main catalog sections ───
+  { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' },
+  { id: 'games', label: 'الألعاب', iconKey: 'games', screenType: 'api-games' },
+  { id: 'usdt', label: 'USDT', iconKey: 'usdt', screenType: 'usdt' },
+  { id: 'escrow', label: 'وسيط وضمان', iconKey: 'escrow', screenType: 'escrow' },
+  { id: 'investment', label: 'استثمار', iconKey: 'investment', screenType: 'investment' },
+  { id: 'exchange', label: 'صرافة', iconKey: 'exchange', screenType: 'exchange' },
 ];
+
+// Keep utilityServices for backward compat with code that references it
+const utilityServices = STATIC_SECTIONS.filter(s => s.isUtility);
 
 // NOTE: Static promo items removed — banners are now fully dynamic from the
 // Supabase banners table (managed by admin). No hardcoded promos in the UI.
@@ -747,47 +771,23 @@ export default function HomeScreen() {
     return mapping[type] || 'manual';
   };
 
+  // ====================================================================
+  // BUILD SERVICES FROM STATIC SECTIONS — NOT from database.
+  // The section structure is HARDCODED in code (STATIC_SECTIONS).
+  // The admin controls CONTENT (providers, games, packages) via DB,
+  // but the section GRID itself is fixed.
+  // ====================================================================
   const dynamicServices = useMemo(() => {
-    // Build services ONLY from Supabase categories (synced via use-supabase-sync)
-    const categoryServices: DynamicService[] = categories
-      .filter(c => {
-        // Check visibility from fbVisibility (still used for admin visibility control)
-        const isVisible = (fbVisibility.sections || {})[c.id] !== false;
-        return isVisible;
-      })
-      .map(c => {
-        // Enrich with data from fbSections (full DbSection data)
-        const section = fbSections[c.id] as any;
-        const sectionIcon = section?.icon || c.icon || '';
-        const sectionColor = section?.color || '';
-        const sectionType = section?.type || c.type || '';
-        const sectionImageUrl = section?.image_url || '';
-        // firebaseIcon: if the icon is base64 or a data URL, treat it as firebaseIcon
-        const isFirebaseIcon = sectionIcon && (sectionIcon.startsWith('data:') || sectionIcon.startsWith('http'));
-
-        return {
-          id: c.id,
-          label: c.name,
-          iconKey: c.type || c.id,
-          color: sectionColor,
-          screenType: mapSectionTypeToScreenType(sectionType),
-          icon: sectionIcon,
-          iconType: getIconType(sectionIcon),
-          firebaseIcon: isFirebaseIcon ? sectionIcon : (sectionImageUrl || undefined),
-        };
-      });
-
-    // Add fixed utility services (transfer, recharge) that are NOT from DB
-    const utilityItems: DynamicService[] = utilityServices.map(s => ({
+    return STATIC_SECTIONS.map(s => ({
       id: s.id,
       label: s.label,
       iconKey: s.iconKey,
+      // Force maroon for ALL icons — unified visual identity
+      color: '#5C1A1B',
       screenType: s.screenType,
       iconType: 'image' as const,
     }));
-
-    return [...categoryServices, ...utilityItems];
-  }, [categories, fbSections, fbVisibility]);
+  }, []);
 
   return (
     <div className="pb-4">
