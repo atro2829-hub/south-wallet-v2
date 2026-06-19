@@ -1,24 +1,19 @@
 #!/usr/bin/env node
 /**
  * sync-sections.mjs — Prebuild script
- * South Wallet — fetches the app structure (sections, sub_sections,
- * service_providers, product_packages, escrow_categories, usdt_categories,
- * investment_plans) from Supabase and writes it to public/data/sections.json
- * so the static export bundles the structure inside the APK.
+ * South Wallet — fetches the app structure from Supabase REST API and
+ * writes it to public/data/sections.json so the static export bundles
+ * the structure inside the APK.
  *
- * This makes the app load instantly on first paint (no Supabase round-trip
- * required for structure). Realtime subscriptions still push admin changes
- * (visibility toggles, new sections, etc.) at runtime — the JSON is just
- * a "boot loader" so the first render is fast.
+ * This script is STANDALONE — it uses only Node's built-in fetch()
+ * (no @supabase/supabase-js dependency) so it can run from any cwd
+ * without needing node_modules to be installed first.
  *
  * Usage:
  *   node scripts/sync-sections.mjs
- *
- * Or via package.json:
- *   "prebuild": "node scripts/sync-sections.mjs"
+ *   NEXT_PUBLIC_SUPABASE_URL=... NEXT_PUBLIC_SUPABASE_ANON_KEY=... node scripts/sync-sections.mjs
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,27 +27,60 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM';
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
-  auth: { persistSession: false },
-});
+// Output file: write to public/data/sections.json in the project root.
+// The script may be invoked from the user app root or from south-admin/,
+// so we resolve relative to the script location (scripts/ is always at
+// the repo root).
+const REPO_ROOT = resolve(__dirname, '..');
+const OUT_FILE = resolve(REPO_ROOT, 'public', 'data', 'sections.json');
 
-const OUT_FILE = resolve(__dirname, '..', 'public', 'data', 'sections.json');
-
-async function fetchAll(table, select = '*', orderBy = 'sort_order', limit = 1000) {
-  const { data, error } = await supabase
-    .from(table)
-    .select(select)
-    .order(orderBy, { ascending: true })
-    .limit(limit);
-  if (error) {
-    console.warn(`[sync-sections] WARNING: failed to fetch ${table}:`, error.message);
-    return [];
+async function fetchAll(table, orderBy = 'sort_order', limit = 1000) {
+  // Some tables don't have a sort_order column, so we fall back to created_at
+  // We try sort_order first, then created_at, then no ordering.
+  const orderings = [orderBy, 'created_at', 'id'];
+  for (const ord of orderings) {
+    const url = `${SUPABASE_URL}/rest/v1/${table}?order=${ord}.asc&limit=${limit}`;
+    try {
+      const res = await fetch(url, {
+        headers: {
+          apikey: SUPABASE_ANON,
+          Authorization: `Bearer ${SUPABASE_ANON}`,
+        },
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      // 400 = bad request (column doesn't exist) → try next ordering
+      // 401/403 = RLS denied → return empty (don't try other orderings)
+      if (res.status === 401 || res.status === 403) {
+        console.warn(`[sync-sections] WARNING: ${table} RLS denied (HTTP ${res.status})`);
+        return [];
+      }
+      // For 400, try next ordering
+    } catch (e) {
+      console.warn(`[sync-sections] WARNING: failed to fetch ${table}:`, e.message);
+      return [];
+    }
   }
-  return data || [];
+  // Last resort: no ordering
+  const url = `${SUPABASE_URL}/rest/v1/${table}?limit=${limit}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_ANON,
+        Authorization: `Bearer ${SUPABASE_ANON}`,
+      },
+    });
+    if (res.ok) return await res.json();
+  } catch {}
+  console.warn(`[sync-sections] WARNING: ${table} all ordering attempts failed`);
+  return [];
 }
 
 async function main() {
   console.log('[sync-sections] Fetching app structure from Supabase...');
+  console.log(`[sync-sections]   URL: ${SUPABASE_URL}`);
+  console.log(`[sync-sections]   Output: ${OUT_FILE}`);
 
   const [
     sections,
@@ -82,10 +110,10 @@ async function main() {
     fetchAll('escrow_categories'),
     fetchAll('usdt_categories'),
     fetchAll('investment_plans'),
-    fetchAll('wallet_addresses', '*', 'currency'),
+    fetchAll('wallet_addresses', 'currency'),
     fetchAll('banners'),
     fetchAll('banks'),
-    fetchAll('exchange_rates', '*', 'updated_at'),
+    fetchAll('exchange_rates', 'updated_at'),
   ]);
 
   const payload = {

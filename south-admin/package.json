@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node ../scripts/sync-sections.mjs",
+    "prebuild": "node ../scripts/sync-sections.mjs && cp ../public/data/sections.json ./public/data/sections.json 2>/dev/null || true",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "sync:sections": "node ../scripts/sync-sections.mjs"
+    "sync:sections": "node ../scripts/sync-sections.mjs && mkdir -p ./public/data && cp ../public/data/sections.json ./public/data/sections.json"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",
