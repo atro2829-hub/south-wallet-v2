@@ -58,6 +58,7 @@ import { supabase } from '@/lib/supabase';
 import { getCategories, type DynamicCategory } from '@/lib/categories';
 import { useAdminSettings } from '@/lib/use-admin-settings';
 import { useSupabaseSync } from '@/lib/use-supabase-sync';
+import { appIcons } from '@/lib/app-icons';
 import {
   onForegroundNotification,
   handleNotificationTap,
@@ -775,9 +776,6 @@ export default function HomeScreen() {
   // Uses custom app-icons (flat design, maroon + accent red).
   // ====================================================================
   const dynamicServices = useMemo(() => {
-    // Import app icons
-    const { appIcons } = require('@/lib/app-icons');
-
     return STATIC_SECTIONS.map(s => ({
       id: s.id,
       label: s.label,

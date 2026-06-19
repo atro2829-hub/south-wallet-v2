@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users, Zap, Trophy, Flame } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { supabase, supabaseService } from '@/lib/supabase';
+import { getAllGames, getGameCatalogue as getStaticCatalogue } from '@/lib/g2bulk-catalog';
 import {
   getApiProviders,
   getApiProvider,
@@ -124,12 +125,11 @@ function GamesScreenInner() {
       setLoadError(null);
 
       try {
-        // Import the static catalog — this is bundled in the APK
-        const { getAllGames } = await import('@/lib/g2bulk-catalog');
-        if (cancelled) return;
-
+        // Use the STATIC catalog (imported at top of file — bundled in APK)
         const staticGames = getAllGames();
         console.log(`[games] Loaded ${staticGames.length} games from static catalog`);
+
+        if (cancelled) return;
 
         // Map to the ApiGame format expected by the UI
         const mappedGames: ApiGame[] = staticGames.map(g => ({
@@ -137,7 +137,7 @@ function GamesScreenInner() {
           code: g.code,
           name: g.name,
           name_ar: g.name,
-          image_url: g.local_image || g.image_url,  // prefer local bundled image
+          image_url: g.local_image || g.image_url,
           banner_url: g.local_image || g.image_url,
           description: g.fields_notes || '',
           provider_id: 'g2bulk',
@@ -218,8 +218,7 @@ function GamesScreenInner() {
 
     // Load catalogue + fields + servers from the STATIC catalog (no API call)
     try {
-      const { getGameCatalogue } = await import('@/lib/g2bulk-catalog');
-      const staticCat = getGameCatalogue(game.code);
+      const staticCat = getStaticCatalogue(game.code);
 
       // Map to the ApiGameCatalogue format
       const mappedCat: ApiGameCatalogue[] = staticCat.map(c => ({
