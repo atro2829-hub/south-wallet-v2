@@ -182,18 +182,14 @@ const quickActions = [
   { id: 'deposit', label: 'إيداع', icon: HandCoins, color: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #D97706)' },
 ];
 
-// Fixed utility services that are app features, not from DB
-// FIX: added escrow + investment + deposit + withdraw + usdt + exchange
-// so they always appear on home regardless of DB sections state.
+// Fixed utility services that are APP FEATURES (not in the sections DB table).
+// These are wallet-level actions that don't belong to any category.
+// DB sections (recharge, games, usdt, escrow, investment, exchange) are
+// rendered SEPARATELY from the sections table — do NOT duplicate them here.
 const utilityServices = [
   { id: 'transfer', label: 'تحويل', iconKey: 'transfer', screenType: 'transfer' as const },
-  { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' as const },
   { id: 'deposit', label: 'إيداع', iconKey: 'deposit', screenType: 'deposit' as const },
   { id: 'withdraw', label: 'سحب', iconKey: 'withdraw', screenType: 'withdraw' as const },
-  { id: 'escrow', label: 'وسيط وضمان', iconKey: 'shield', screenType: 'escrow' as const },
-  { id: 'investment', label: 'استثمار', iconKey: 'trending-up', screenType: 'investment' as const },
-  { id: 'usdt', label: 'USDT', iconKey: 'bitcoin', screenType: 'usdt' as const },
-  { id: 'exchange', label: 'صرافة', iconKey: 'arrow-left-right', screenType: 'exchange' as const },
   { id: 'support', label: 'الدعم', iconKey: 'support', screenType: 'support' as const },
 ];
 
