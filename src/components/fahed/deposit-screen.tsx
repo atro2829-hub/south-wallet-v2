@@ -104,7 +104,7 @@ export default function DepositScreen() {
 
   // Deposit form
   const [depositAmount, setDepositAmount] = useState('');
-  const [depositCurrency] = useState<'USD'>('USD');
+  const [depositCurrency, setDepositCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
   const [depositMethod, setDepositMethod] = useState<DepositMethod>('bank_transfer');
   const [receiptImage, setReceiptImage] = useState('');
   const [cardCode, setCardCode] = useState('');
@@ -125,7 +125,7 @@ export default function DepositScreen() {
 
   // Withdraw form
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawCurrency] = useState<'USD'>('USD');
+  const [withdrawCurrency, setWithdrawCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
   const [withdrawMethod, setWithdrawMethod] = useState<WithdrawMethod>('bank_transfer');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankName, setBankName] = useState('');
@@ -369,7 +369,9 @@ export default function DepositScreen() {
     }
   };
 
-  // Validate and redeem recharge card code against Supabase bulk_codes
+  // Validate and redeem recharge card code.
+  // FIX: now searches BOTH gift_codes (admin-generated) AND bulk_codes (legacy).
+  // This ensures codes generated from the admin app work in the user app.
   const handleRedeemCardCode = async () => {
     if (!user || !cardCode.trim()) return;
 
@@ -378,13 +380,96 @@ export default function DepositScreen() {
     setIsSubmitting(true);
 
     try {
-      // Search for the code in bulk_codes table
+      const code = cardCode.trim().toUpperCase();
+      const userId = user.userId || user.id;
+
+      // 1) First try gift_codes table (admin-generated codes)
+      const { data: giftCode, error: giftErr } = await supabase
+        .from('gift_codes')
+        .select('*')
+        .eq('code', code)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (giftCode && !giftErr) {
+        // Check if already fully used
+        if (giftCode.status === 'redeemed' || (giftCode.max_uses && (giftCode.used_count || 0) >= giftCode.max_uses)) {
+          setCardError('هذا الكود مستخدم بالفعل أو وصل للحد الأقصى');
+          setIsSubmitting(false);
+          return;
+        }
+        // Check expiry
+        if (giftCode.expires_at && new Date(giftCode.expires_at) < new Date()) {
+          setCardError('انتهت صلاحية هذا الكود');
+          setIsSubmitting(false);
+          return;
+        }
+
+        // Mark as redeemed + increment used_count
+        const newUsedCount = (giftCode.used_count || 0) + 1;
+        const { error: updateErr } = await supabase
+          .from('gift_codes')
+          .update({
+            status: giftCode.max_uses && newUsedCount >= giftCode.max_uses ? 'redeemed' : 'active',
+            used_count: newUsedCount,
+            redeemed_by: userId,
+            redeemed_at: new Date().toISOString(),
+          })
+          .eq('id', giftCode.id);
+
+        if (updateErr) {
+          setCardError('فشل تحديث الكود: ' + updateErr.message);
+          setIsSubmitting(false);
+          return;
+        }
+
+        // Credit the user's balance
+        const cardAmount = Number(giftCode.amount) || 0;
+        const cardCurrency = giftCode.currency || 'USD';
+        if (cardAmount > 0) {
+          try {
+            await supabaseService.updateBalance(userId, cardCurrency, cardAmount, 'add');
+            // Update local store
+            const storeUser = useAppStore.getState().user;
+            if (storeUser) {
+              const balanceKey = `balance${cardCurrency}` as keyof typeof storeUser;
+              useAppStore.getState().setUser({
+                ...storeUser,
+                [balanceKey]: ((storeUser[balanceKey] as number) || 0) + cardAmount,
+              });
+            }
+          } catch (e) {
+            console.error('Balance update failed:', e);
+          }
+          // Log transaction
+          try {
+            await supabase.from('transactions').insert({
+              user_id: userId,
+              amount: cardAmount,
+              currency: cardCurrency,
+              type: 'deposit',
+              status: 'completed',
+              description: `استرداد كود شحن: ${code}`,
+              reference_number: giftCode.id,
+              completed_at: new Date().toISOString(),
+            });
+          } catch {}
+        }
+
+        setCardSuccess(true);
+        setCardCode('');
+        setTimeout(() => setCardSuccess(false), 3000);
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 2) Fall back to bulk_codes table (legacy recharge cards)
       const { data: codeData, error: codeError } = await supabase
         .from('bulk_codes')
         .select('*')
         .eq('code', cardCode.trim())
         .eq('status', 'active')
-        .single();
+        .maybeSingle();
 
       if (codeError || !codeData) {
         setCardError('كود الشحن غير صالح أو مستخدم مسبقاً');
@@ -403,7 +488,7 @@ export default function DepositScreen() {
         .from('bulk_codes')
         .update({
           used: true,
-          used_by: user.id,
+          used_by: userId,
           used_at: new Date().toISOString(),
           status: 'used',
         })
@@ -421,13 +506,13 @@ export default function DepositScreen() {
       const cardCurrency = codeData.currency || 'USD';
       const balanceKey = `balance${cardCurrency}` as keyof typeof user;
 
-      if (cardAmount > 0 && user.id) {
+      if (cardAmount > 0 && userId) {
         // Get current balance and update
         const { data: userData, error: userError } = await supabase
           .from('users')
           .select(`balance_${cardCurrency.toLowerCase()}`)
-          .eq('id', user.id)
-          .single();
+          .eq('id', userId)
+          .maybeSingle();
 
         if (!userError && userData) {
           const currentVal = userData[`balance_${cardCurrency.toLowerCase()}`] || 0;
@@ -436,7 +521,7 @@ export default function DepositScreen() {
           await supabase
             .from('users')
             .update({ [`balance_${cardCurrency.toLowerCase()}`]: newBalance, updated_at: new Date().toISOString() })
-            .eq('id', user.id);
+            .eq('id', userId);
 
           // Update local store
           const storeUser = useAppStore.getState().user;
@@ -841,9 +926,17 @@ export default function DepositScreen() {
                     style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
                     dir="ltr"
                   />
-                  <span className="text-sm font-medium" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    USD
-                  </span>
+                  {/* Currency selector — supports all 3 currencies */}
+                  <select
+                    value={depositCurrency}
+                    onChange={(e) => setDepositCurrency(e.target.value as 'YER' | 'SAR' | 'USD')}
+                    className="bg-transparent outline-none text-sm font-bold cursor-pointer"
+                    style={{ color: '#5C1A1B' }}
+                  >
+                    <option value="YER">YER</option>
+                    <option value="SAR">SAR</option>
+                    <option value="USD">USD</option>
+                  </select>
                 </div>
               </div>
 
@@ -1477,7 +1570,7 @@ export default function DepositScreen() {
                   {promoApplied && (
                     <div className="flex items-center gap-1.5 mt-2">
                       <Tag size={10} color="#10B981" />
-                      <span className="text-[10px]" style={{ color: '#10B981' }}>خصم ${formatNumber(promoDiscount)} USD</span>
+                      <span className="text-[10px]" style={{ color: '#10B981' }}>خصم {formatNumber(promoDiscount)} {depositCurrency}</span>
                     </div>
                   )}
                 </div>
@@ -1496,7 +1589,7 @@ export default function DepositScreen() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-white/50 text-[10px]">الرصيد بعد الإيداع</p>
-                      <p className="text-white text-xl font-bold">${formatNumber(balanceAfterDeposit)} USD</p>
+                      <p className="text-white text-xl font-bold">{formatNumber(balanceAfterDeposit)} {depositCurrency}</p>
                     </div>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.15)' }}>
                       <Wallet size={18} color="#FFF" strokeWidth={1.5} />
@@ -1562,14 +1655,22 @@ export default function DepositScreen() {
                     style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
                     dir="ltr"
                   />
-                  <span className="text-sm font-medium" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    USD
-                  </span>
+                  {/* Currency selector — supports all 3 currencies */}
+                  <select
+                    value={withdrawCurrency}
+                    onChange={(e) => setWithdrawCurrency(e.target.value as 'YER' | 'SAR' | 'USD')}
+                    className="bg-transparent outline-none text-sm font-bold cursor-pointer"
+                    style={{ color: '#5C1A1B' }}
+                  >
+                    <option value="YER">YER</option>
+                    <option value="SAR">SAR</option>
+                    <option value="USD">USD</option>
+                  </select>
                 </div>
                 <div className="flex items-center gap-1 mt-1">
                   <Info size={10} color={isDark ? '#666' : '#AAA'} />
                   <span className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
-                    الرصيد المتاح: ${formatNumber(withdrawBalance)} USD
+                    الرصيد المتاح: {formatNumber(getBalance(withdrawCurrency))} {withdrawCurrency}
                   </span>
                 </div>
               </div>
