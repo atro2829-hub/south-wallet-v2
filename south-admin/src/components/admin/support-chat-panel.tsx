@@ -170,8 +170,7 @@ function TicketsSection() {
         ticket_id: selectedTicketId,
         sender_id: adminUser.uid,
         sender_type: 'admin',
-        sender_name: adminUser.displayName || 'الدعم الفني',
-        sender_role: 'admin',
+        // FIX: removed sender_name + sender_role (don't exist on support_messages)
         message: replyText.trim(),
         is_read: false,
       });
@@ -275,10 +274,12 @@ function TicketsSection() {
               ) : messages.map((m, i) => (
                 <div key={m.id || i} className={`flex ${m.sender_type === 'admin' ? 'justify-start' : 'justify-end'}`}>
                   <div className={`max-w-[75%] rounded-2xl p-3 ${m.sender_type === 'admin' ? 'bg-[#5C1A1B] text-white' : 'bg-muted'}`}>
-                    {m.attachments && <img src={m.attachments} alt="" className="w-full max-w-[200px] rounded-lg mb-2" />}
+                    {m.attachments && Array.isArray(m.attachments) && m.attachments.length > 0 && (
+                      <img src={m.attachments[0]} alt="" className="w-full max-w-[200px] rounded-lg mb-2" />
+                    )}
                     <p className="text-sm whitespace-pre-wrap">{m.message}</p>
                     <p className={`text-[10px] mt-1 ${m.sender_type === 'admin' ? 'text-white/60' : 'text-muted-foreground'}`}>
-                      {m.sender_name ? m.sender_name + ' • ' : ''}{timeAgo(m.created_at)}
+                      {m.sender_type === 'admin' ? 'الدعم الفني' : (m.sender_name || 'مستخدم') + ' • '}{timeAgo(m.created_at)}
                     </p>
                   </div>
                 </div>
@@ -484,7 +485,10 @@ function LiveChatSection() {
               ) : messages.map((m, i) => (
                 <div key={m.id || i} className={`flex ${m.sender_type === 'admin' ? 'justify-start' : 'justify-end'}`}>
                   <div className={`max-w-[75%] rounded-2xl p-3 ${m.sender_type === 'admin' ? 'bg-[#5C1A1B] text-white' : 'bg-muted'}`}>
-                    {m.attachment_url && <img src={m.attachment_url} alt="" className="w-full max-w-[200px] rounded-lg mb-2" />}
+                    {/* FIX: attachments is JSONB array, not a string column attachment_url */}
+                    {m.attachments && Array.isArray(m.attachments) && m.attachments.length > 0 && (
+                      <img src={m.attachments[0]} alt="" className="w-full max-w-[200px] rounded-lg mb-2" />
+                    )}
                     <p className="text-sm whitespace-pre-wrap">{m.message}</p>
                     <p className={`text-[10px] mt-1 ${m.sender_type === 'admin' ? 'text-white/60' : 'text-muted-foreground'}`}>
                       {timeAgo(m.created_at)}
