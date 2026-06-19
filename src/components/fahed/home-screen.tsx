@@ -201,14 +201,13 @@ interface StaticSection {
 
 const STATIC_SECTIONS: StaticSection[] = [
   // ─── Wallet utilities (actions, not catalogs) ───
-  { id: 'transfer', label: 'تحويل', iconKey: 'transfer', screenType: 'transfer', isUtility: true },
+  { id: 'transfer', label: 'تحويل', iconKey: 'transfer', screenType: 'wallet-transfer', isUtility: true },
   { id: 'deposit', label: 'إيداع', iconKey: 'deposit', screenType: 'deposit', isUtility: true },
-  { id: 'withdraw', label: 'سحب', iconKey: 'withdraw', screenType: 'withdraw', isUtility: true },
   { id: 'support', label: 'الدعم', iconKey: 'support', screenType: 'support', isUtility: true },
   // ─── Main catalog sections ───
   { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' },
-  { id: 'games', label: 'الألعاب', iconKey: 'games', screenType: 'api-games' },
-  { id: 'usdt', label: 'USDT', iconKey: 'usdt', screenType: 'usdt' },
+  { id: 'games', label: 'الألعاب', iconKey: 'games', screenType: 'games' },
+  { id: 'usdt', label: 'USDT', iconKey: 'usdt', screenType: 'deposit' },
   { id: 'escrow', label: 'وسيط وضمان', iconKey: 'escrow', screenType: 'escrow' },
   { id: 'investment', label: 'استثمار', iconKey: 'investment', screenType: 'investment' },
   { id: 'exchange', label: 'صرافة', iconKey: 'exchange', screenType: 'exchange' },
