@@ -44,38 +44,29 @@ export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
 
 export interface DbUser {
   id: string;
-  firebase_uid: string | null;
-  email: string | null;
-  phone: string | null;
-  first_name: string;
-  second_name: string;
-  third_name: string;
-  family_name: string;
+  phone: string;
+  display_id: string;
   display_name: string;
-  display_id?: string; // 6-digit user-facing account number
-  balance_yer: number;
-  balance_sar: number;
-  balance_usd: number;
-  card_type: string;
-  card_number: string;
-  national_id: string;
-  governorate: string;
-  avatar_url: string;
-  role: 'user' | 'admin' | 'owner' | 'agent';
-  kyc_status: 'pending' | 'submitted' | 'verified' | 'rejected';
+  email: string | null;
+  password_hash: string;
+  pin_hash: string | null;
+  balance_yer: number | string;
+  balance_sar: number | string;
+  balance_usd: number | string;
+  role: 'user' | 'admin' | 'support';
+  kyc_status: 'none' | 'pending' | 'verified' | 'rejected';
+  kyc_verified_at: string | null;
+  kyc_rejected_at: string | null;
+  kyc_reject_reason: string | null;
+  fcm_token: string | null;
+  avatar_url: string | null;
+  referral_code: string | null;
   is_blocked: boolean;
+  block_reason: string | null;
   is_active: boolean;
-  id_front_url: string;
-  id_back_url: string;
-  id_selfie_url: string;
-  id_verified_at: string | null;
-  id_rejection_reason: string;
-  fcm_token: string;
-  theme: 'light' | 'dark' | 'system';
-  language: string;
-  pin_code: string;
-  login_attempts: number;
   last_login_at: string | null;
+  login_attempts: number;
+  metadata: Record<string, any>;
   created_at: string;
   updated_at: string;
 }

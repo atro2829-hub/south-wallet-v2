@@ -753,6 +753,8 @@ function AppContent() {
     escrow: EscrowScreen,
     'direct-chat': DirectChatScreen,
     games: GamesScreen,
+    'gift-cards': GamesScreen, // reuse GamesScreen for now (will show G2Bulk categories)
+    favorites: GamesScreen,    // reuse GamesScreen for now (will show favorites)
   };
 
   if (activeScreen in overlayScreens) {

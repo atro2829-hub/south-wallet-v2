@@ -25,37 +25,33 @@ import type { ServiceProvider, ProductPackage, ServiceCategory } from '@/lib/sto
 /** Map a Supabase DbUser row to the store's User shape.
  *  NOTE: store.user.id is the Firebase Auth UID, NOT the Supabase UUID. */
 function mapDbUserToStore(dbUser: DbUser, firebaseUid: string) {
-  const fullName =
-    [dbUser.first_name, dbUser.second_name, dbUser.third_name, dbUser.family_name]
-      .filter((n) => n && n.trim())
-      .join(' ') ||
-    dbUser.display_name ||
-    '';
-
+  // The new schema uses display_name (not first_name/second_name/etc.)
+  // and role is an ENUM ('user', 'admin', 'support')
+  // kyc_status is an ENUM ('none', 'pending', 'verified', 'rejected')
   return {
     id: firebaseUid, // store keeps Firebase UID as id
     email: dbUser.email || '',
     phone: dbUser.phone || '',
-    name: fullName,
-    firstName: dbUser.first_name || '',
-    secondName: dbUser.second_name || '',
-    thirdName: dbUser.third_name || '',
-    familyName: dbUser.family_name || '',
-    nationalId: dbUser.national_id || '',
+    name: dbUser.display_name || dbUser.phone || '',
+    firstName: dbUser.display_name || '',
+    secondName: '',
+    thirdName: '',
+    familyName: '',
+    nationalId: '',
     avatar: dbUser.avatar_url || '',
-    role: (dbUser.role === 'agent' ? 'user' : dbUser.role) as 'user' | 'admin' | 'owner',
+    role: (dbUser.role === 'admin' || dbUser.role === 'support' ? 'admin' : 'user') as 'user' | 'admin' | 'owner',
     userId: dbUser.id, // Supabase UUID stored here for reference
     displayId: dbUser.display_id || '', // 6-digit user-facing account number
-    kycStatus: dbUser.kyc_status || 'pending',
+    kycStatus: (dbUser.kyc_status === 'none' ? 'pending' : dbUser.kyc_status) as 'pending' | 'submitted' | 'verified' | 'rejected',
     isBlocked: dbUser.is_blocked || false,
-    balanceYER: dbUser.balance_yer || 0,
-    balanceSAR: dbUser.balance_sar || 0,
-    balanceUSD: dbUser.balance_usd || 0,
-    cardType: dbUser.card_type || '',
-    cardNumber: dbUser.card_number || '',
-    cardIssuedAt: '', // not in Supabase schema
-    governorate: dbUser.governorate || '',
-    theme: (dbUser.theme === 'system' ? 'light' : dbUser.theme) as 'light' | 'dark',
+    balanceYER: Number(dbUser.balance_yer) || 0,
+    balanceSAR: Number(dbUser.balance_sar) || 0,
+    balanceUSD: Number(dbUser.balance_usd) || 0,
+    cardType: '',
+    cardNumber: '',
+    cardIssuedAt: '',
+    governorate: '',
+    theme: 'light' as 'light' | 'dark',
   };
 }
 

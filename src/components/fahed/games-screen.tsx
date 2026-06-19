@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users, Zap, Trophy, Flame } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { supabase, supabaseService } from '@/lib/supabase';
-import { getAllGames, getGameCatalogue as getStaticCatalogue } from '@/lib/g2bulk-catalog';
+import { getAllGames, getGameCatalogue as getStaticCatalogue, fetchGameCatalogue } from '@/lib/g2bulk-catalog';
 import {
   getApiProviders,
   getApiProvider,
@@ -217,8 +217,15 @@ function GamesScreenInner() {
     setGameServers({});
 
     // Load catalogue + fields + servers from the STATIC catalog (no API call)
+    // If static catalog is empty, fetch on demand from G2Bulk CDN
     try {
-      const staticCat = getStaticCatalogue(game.code);
+      let staticCat = getStaticCatalogue(game.code);
+
+      // If no static catalogue, fetch on demand
+      if (staticCat.length === 0) {
+        setCatalogue([]); // show loading state
+        staticCat = await fetchGameCatalogue(game.code);
+      }
 
       // Map to the ApiGameCatalogue format
       const mappedCat: ApiGameCatalogue[] = staticCat.map(c => ({
@@ -737,7 +744,11 @@ function GamePurchaseView({
             );
           })}
           {(!catalogue || catalogue.length === 0) && (
-            <p className="text-center text-muted-foreground text-sm py-4">لا توجد باقات متاحة</p>
+            <div className="text-center py-8 space-y-2">
+              <Package className="w-10 h-10 mx-auto text-muted-foreground/30" />
+              <p className="text-muted-foreground text-sm">سيتم إضافة منتجات قريباً</p>
+              <p className="text-muted-foreground/60 text-xs">نحن نعمل على تجهيز باقات هذه اللعبة</p>
+            </div>
           )}
         </div>
       </div>

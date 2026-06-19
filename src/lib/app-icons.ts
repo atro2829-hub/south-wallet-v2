@@ -88,6 +88,21 @@ const supportSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="4
   <circle cx="32" cy="34" r="3" fill="${ACCENT}"/>
 </svg>`;
 
+// ─── Gift Cards (بطاقات وأكواد) — gift box ──────────────────────────
+const giftCardsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <rect x="6" y="16" width="36" height="26" rx="3" fill="${WHITE}" stroke="${MAROON}" stroke-width="2.5"/>
+  <path d="M6 24 L42 24" stroke="${MAROON}" stroke-width="2"/>
+  <path d="M24 16 L24 42" stroke="${MAROON}" stroke-width="2"/>
+  <path d="M18 16 C14 16 12 12 14 10 C16 8 20 10 24 16 C28 10 32 8 34 10 C36 12 34 16 30 16 Z" fill="${ACCENT}"/>
+  <circle cx="24" cy="30" r="2" fill="${MAROON}"/>
+</svg>`;
+
+// ─── Favorites (المفضلة) — heart ────────────────────────────────────
+const favoritesSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <path d="M24 40 C24 40 8 30 8 18 C8 12 13 8 18 8 C21 8 23 10 24 12 C25 10 27 8 30 8 C35 8 40 12 40 18 C40 30 24 40 24 40 Z" fill="${WHITE}" stroke="${MAROON}" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M24 36 C24 36 12 28 12 19 C12 15 15 12 18 12 C20 12 22 14 24 17 C26 14 28 12 30 12 C33 12 36 15 36 19 C36 28 24 36 24 36 Z" fill="${ACCENT}" opacity="0.3"/>
+</svg>`;
+
 // ─── Export all icons as data URLs ──────────────────────────────────
 export const appIcons: Record<string, string> = {
   recharge: svg(rechargeSvg),
@@ -99,6 +114,8 @@ export const appIcons: Record<string, string> = {
   investment: svg(investmentSvg),
   exchange: svg(exchangeSvg),
   support: svg(supportSvg),
+  'gift-cards': svg(giftCardsSvg),
+  favorites: svg(favoritesSvg),
 };
 
 // Helper to get an icon by key

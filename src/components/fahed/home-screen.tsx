@@ -208,6 +208,8 @@ const STATIC_SECTIONS: StaticSection[] = [
   // ─── Main catalog sections ───
   { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' },
   { id: 'games', label: 'الألعاب', iconKey: 'games', screenType: 'games' },
+  { id: 'gift-cards', label: 'بطاقات وأكواد', iconKey: 'gift-cards', screenType: 'gift-cards' },
+  { id: 'favorites', label: 'المفضلة', iconKey: 'favorites', screenType: 'favorites' },
   { id: 'usdt', label: 'USDT', iconKey: 'usdt', screenType: 'deposit' },
   { id: 'escrow', label: 'وسيط وضمان', iconKey: 'escrow', screenType: 'escrow' },
   { id: 'investment', label: 'استثمار', iconKey: 'investment', screenType: 'investment' },
@@ -698,6 +700,12 @@ export default function HomeScreen() {
       case 'games':
       case 'api-games':
         useAppStore.getState().setActiveScreen('games');
+        break;
+      case 'gift-cards':
+        useAppStore.getState().setActiveScreen('gift-cards');
+        break;
+      case 'favorites':
+        useAppStore.getState().setActiveScreen('favorites');
         break;
       case 'api-products':
       case 'telecom':

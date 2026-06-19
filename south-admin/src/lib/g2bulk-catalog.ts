@@ -58,13 +58,60 @@ export function getGameByCode(code: string): G2BulkGame | null {
 }
 
 // ─── Catalogues (packages) ──────────────────────────────────────────
+// Tries static catalog first; if empty, fetches from G2Bulk API on demand.
+// This keeps the APK small (no 4643 catalogues bundled) while still
+// showing packages instantly for cached games.
+const catalogueCache: Record<string, G2BulkCatalogue[]> = {};
+
 export function getGameCatalogue(gameCode: string): G2BulkCatalogue[] {
-  const catalogues = catalog.catalogues?.[gameCode] || [];
-  return catalogues.map((c: any) => ({
-    id: c.id,
-    name: c.name,
-    amount: c.amount,
-  }));
+  // Check static catalog first
+  const staticCat = catalog.catalogues?.[gameCode] || [];
+  if (staticCat.length > 0) {
+    return staticCat.map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      amount: c.amount,
+    }));
+  }
+  // Check runtime cache
+  if (catalogueCache[gameCode]) {
+    return catalogueCache[gameCode];
+  }
+  return []; // Will be fetched on demand via fetchGameCatalogue()
+}
+
+// Fetch catalogue from G2Bulk API on demand (called from games-screen)
+export async function fetchGameCatalogue(gameCode: string): Promise<G2BulkCatalogue[]> {
+  // Check cache first
+  if (catalogueCache[gameCode]) {
+    return catalogueCache[gameCode];
+  }
+
+  try {
+    // Use the qt-game-api proxy (no API key in client)
+    const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM';
+    const res = await fetch(
+      `https://kifmxseonkdsxuanznny.functions.supabase.co/g2bulk-proxy/v1/games/${gameCode}/catalogue`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON,
+          Authorization: `Bearer ${SUPABASE_ANON}`,
+        },
+      }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const cats: G2BulkCatalogue[] = (data.catalogues || []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      amount: c.amount,
+    }));
+    // Cache for future use
+    catalogueCache[gameCode] = cats;
+    return cats;
+  } catch {
+    return [];
+  }
 }
 
 // ─── Categories ─────────────────────────────────────────────────────
@@ -76,6 +123,21 @@ export function getAllCategories(): G2BulkCategory[] {
     image_url: c.image_url || null,
     product_count: c.product_count || 0,
   }));
+}
+
+// ─── Filter categories by type (gift cards, streaming, etc.) ────────
+export function getCategoriesByType(type: 'gift' | 'streaming' | 'shopping'): G2BulkCategory[] {
+  const all = getAllCategories();
+  const keywords: Record<string, string[]> = {
+    gift: ['itunes', 'google play', 'amazon', 'psn', 'playstation', 'steam', 'gift', 'card'],
+    streaming: ['netflix', 'spotify', 'youtube', 'disney', 'shahid', 'subscription'],
+    shopping: ['ebay', 'aliexpress', 'shopping'],
+  };
+  const kw = keywords[type] || [];
+  return all.filter(c => {
+    const title = (c.title || '').toLowerCase();
+    return kw.some(k => title.includes(k));
+  });
 }
 
 // ─── Price calculation with profit margin ───────────────────────────
