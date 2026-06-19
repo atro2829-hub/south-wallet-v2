@@ -371,45 +371,69 @@ export default function InvestmentScreen() {
         status: 'active',
       };
 
-      const updates: Record<string, unknown> = {};
-      updates[`users/${user.id}/investments/${investId}`] = newInvestment;
+      // FIX: write directly to Supabase 'investments' table (was using
+      // Firebase multi-path update to users/{uid}/investments/{id} which
+      // db-compat silently failed because users has no 'investments' column).
+      const userId = user.userId || user.id;
 
-      // Use runTransaction for balance deduction to avoid race conditions
-      const txResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
-        const val = currentVal || 0;
-        if (val < amount) return; // Abort if insufficient
-        return val - amount;
-      });
+      // 1) Deduct balance atomically via RPC
+      try {
+        const { supabaseService } = await import('@/lib/supabase');
+        await supabaseService.updateBalance(userId, currency, amount, 'subtract');
+      } catch (e) {
+        console.error('[investment] balance deduction failed:', e);
+        throw new Error('فشل خصم الرصيد');
+      }
 
-      const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-      updates[`transactions/${txId}`] = {
-        id: txId,
-        fromUserId: user.id,
-        toUserId: user.id,
-        amount,
-        currency,
-        type: 'investment',
-        status: 'completed',
-        description: `استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name}`,
-        createdAt: new Date().toISOString(),
-      };
+      // 2) Insert into investments table
+      const { supabase } = await import('@/lib/supabase');
+      const { data: investRow, error: investErr } = await supabase
+        .from('investments')
+        .insert({
+          user_id: userId,
+          amount,
+          currency,
+          plan_id: selectedPlan.id,
+          plan_name: selectedPlan.name,
+          daily_return: selectedPlan.profitRate,
+          total_return: estimatedReturn,
+          status: 'active',
+          starts_at: new Date().toISOString(),
+          ends_at: endDate.toISOString(),
+        })
+        .select()
+        .single();
 
-      const notifId = `notif-${Date.now()}`;
-      updates[`notifications/${user.id}/${notifId}`] = {
-        id: notifId,
-        title: 'تم الاستثمار بنجاح',
-        body: `تم استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name} بعائد ${selectedPlan.profitRate}%`,
-        type: 'transaction',
-        isRead: false,
-        createdAt: new Date().toISOString(),
-      };
+      if (investErr) {
+        console.error('[investment] insert failed — refunding:', investErr);
+        // Refund the balance
+        try {
+          const { supabaseService } = await import('@/lib/supabase');
+          await supabaseService.updateBalance(userId, currency, amount, 'add');
+        } catch {}
+        throw new Error('فشل تسجيل الاستثمار: ' + investErr.message);
+      }
 
-      await update(ref(database), updates);
+      // 3) Record transaction
+      try {
+        await supabase.from('transactions').insert({
+          user_id: userId,
+          amount,
+          currency,
+          type: 'investment',
+          status: 'completed',
+          description: `استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name}`,
+          reference_number: investRow?.id || '',
+          completed_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('[investment] transaction log failed:', e);
+      }
 
-      // Send FCM push notification for investment
+      // 4) Notify user + admin
       try {
         const { sendNotificationToUser, sendNotificationToAdmin } = await import('@/lib/notifications');
-        await sendNotificationToUser(user.id, {
+        await sendNotificationToUser(userId, {
           title: 'تم الاستثمار بنجاح',
           body: `تم استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name} بعائد ${selectedPlan.profitRate}%`,
           type: 'transaction',
@@ -420,14 +444,15 @@ export default function InvestmentScreen() {
           body: `${user.name} استثمر ${formatAmount(amount, currency)} ${currencySymbols[currency]} في ${selectedPlan.name}`,
           type: 'transaction',
           category: 'investments',
-          data: { action: 'new_investment', userId: user.id },
+          data: { action: 'new_investment', userId },
         });
       } catch (notifErr) {
         console.warn('Investment notification failed:', notifErr);
       }
 
       addInvestment(newInvestment);
-      setUser({ ...user, [balanceField]: txResult.committed ? txResult.snapshot.val() : (user[balanceField] as number) - amount });
+      const balanceKey = `balance${currency}` as keyof typeof user;
+      setUser({ ...user, [balanceKey]: ((user[balanceKey] as number) || 0) - amount });
       setShowInvestModal(false);
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);

@@ -671,9 +671,18 @@ export default function HomeScreen() {
       return;
     }
 
-    // Route based on screenType (derived from section type in DB)
+    // Route based on screenType
     const effectiveScreenType = screenType || 'manual';
     switch (effectiveScreenType) {
+      case 'wallet-transfer':
+        setTransferOpen(true);
+        break;
+      case 'deposit':
+        setActiveScreen('deposit');
+        break;
+      case 'support':
+        setActiveScreen('support');
+        break;
       case 'exchange':
         setActiveScreen('exchange');
         break;
@@ -684,9 +693,9 @@ export default function HomeScreen() {
         useAppStore.getState().setActiveScreen('investment');
         break;
       case 'usdt':
-        useAppStore.getState().setSelectedCategory(serviceId);
-        useAppStore.getState().setActiveScreen('category-detail');
+        setActiveScreen('deposit');
         break;
+      case 'games':
       case 'api-games':
         useAppStore.getState().setActiveScreen('games');
         break;

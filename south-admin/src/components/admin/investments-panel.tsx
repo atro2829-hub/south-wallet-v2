@@ -40,7 +40,7 @@ interface UserInvestment {
   amount: number;
   currency: string;
   profitRate: number;
-  status: 'active' | 'completed' | 'cancelled';
+  status: 'active' | 'matured' | 'cancelled';
   startDate: string;
   endDate: string;
   totalProfit: number;
@@ -124,7 +124,7 @@ export default function InvestmentsPanel() {
           startDate: inv.starts_at || inv.created_at,
           endDate: inv.ends_at || '',
           totalProfit: Number(inv.total_return) || 0,
-          earnedProfit: Number(inv.earned_return) || 0,
+          earnedProfit: 0, // FIX: earned_return column doesn't exist yet
         }));
         setInvestments(list);
       } catch (e: any) {
@@ -219,7 +219,7 @@ export default function InvestmentsPanel() {
     try {
       const { error } = await supabaseAdmin
         .from('investments')
-        .update({ status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .update({ status: 'matured', updated_at: new Date().toISOString() })
         .eq('id', inv.id);
       if (error) throw error;
       // Send FCM push notification + in-app notification
@@ -242,7 +242,7 @@ export default function InvestmentsPanel() {
     try {
       const { error } = await supabaseAdmin
         .from('investments')
-        .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
         .eq('id', inv.id);
       if (error) throw error;
 
@@ -285,15 +285,15 @@ export default function InvestmentsPanel() {
   });
 
   const activeInvestments = investments.filter((i) => i.status === 'active');
-  const completedInvestments = investments.filter((i) => i.status === 'completed');
+  const completedInvestments = investments.filter((i) => i.status === 'matured');
   const totalInvested = investments.reduce((sum, i) => sum + (i.amount || 0), 0);
   const totalProfitsPaid = completedInvestments.reduce((sum, i) => sum + (i.totalProfit || 0), 0);
 
   const typeLabels: Record<string, string> = { daily: 'يومي', weekly: 'أسبوعي', monthly: 'شهري', quarterly: 'ربع سنوي' };
-  const statusLabels: Record<string, string> = { active: 'نشط', completed: 'مكتمل', cancelled: 'ملغي' };
+  const statusLabels: Record<string, string> = { active: 'نشط', matured: 'مكتمل', cancelled: 'ملغي' };
   const statusColors: Record<string, string> = {
     active: 'bg-green-500/20 text-green-600 dark:text-green-400',
-    completed: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
+    matured: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
     cancelled: 'bg-red-500/20 text-red-600 dark:text-red-400',
   };
 
@@ -381,7 +381,7 @@ export default function InvestmentsPanel() {
               <SelectContent>
                 <SelectItem value="all">الكل</SelectItem>
                 <SelectItem value="active">نشط</SelectItem>
-                <SelectItem value="completed">مكتمل</SelectItem>
+                <SelectItem value="matured">مكتمل</SelectItem>
                 <SelectItem value="cancelled">ملغي</SelectItem>
               </SelectContent>
             </Select>
@@ -393,8 +393,8 @@ export default function InvestmentsPanel() {
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: inv.status === 'active' ? 'rgba(34,197,94,0.1)' : inv.status === 'completed' ? 'rgba(59,130,246,0.1)' : 'rgba(239,68,68,0.1)' }}>
-                          {inv.status === 'active' ? <Clock className="w-5 h-5 text-green-500" /> : inv.status === 'completed' ? <CheckCircle className="w-5 h-5 text-blue-500" /> : <XCircle className="w-5 h-5 text-red-500" />}
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: inv.status === 'active' ? 'rgba(34,197,94,0.1)' : inv.status === 'matured' ? 'rgba(59,130,246,0.1)' : 'rgba(239,68,68,0.1)' }}>
+                          {inv.status === 'active' ? <Clock className="w-5 h-5 text-green-500" /> : inv.status === 'matured' ? <CheckCircle className="w-5 h-5 text-blue-500" /> : <XCircle className="w-5 h-5 text-red-500" />}}
                         </div>
                         <div>
                           <p className="font-medium text-sm">{inv.userName}</p>
