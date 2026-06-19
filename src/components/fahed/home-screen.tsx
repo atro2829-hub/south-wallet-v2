@@ -772,11 +772,12 @@ export default function HomeScreen() {
 
   // ====================================================================
   // BUILD SERVICES FROM STATIC SECTIONS — NOT from database.
-  // The section structure is HARDCODED in code (STATIC_SECTIONS).
-  // The admin controls CONTENT (providers, games, packages) via DB,
-  // but the section GRID itself is fixed.
+  // Uses custom app-icons (flat design, maroon + accent red).
   // ====================================================================
   const dynamicServices = useMemo(() => {
+    // Import app icons
+    const { appIcons } = require('@/lib/app-icons');
+
     return STATIC_SECTIONS.map(s => ({
       id: s.id,
       label: s.label,
@@ -785,6 +786,8 @@ export default function HomeScreen() {
       color: '#5C1A1B',
       screenType: s.screenType,
       iconType: 'image' as const,
+      // Use the custom app icon as firebaseIcon (renders as <img>)
+      firebaseIcon: appIcons[s.iconKey] || appIcons.recharge,
     }));
   }, []);
 
@@ -1323,28 +1326,26 @@ export default function HomeScreen() {
                 }}
               >
                 <div
-                  className="w-11 h-11 rounded-2xl overflow-hidden flex items-center justify-center"
-                  style={{ background: hasAnyIcon || shouldUseLucide ? 'transparent' : iconBgColor }}
+                  className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center"
+                  style={{
+                    // Jaib-style: white rounded square container for ALL icons
+                    background: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                    boxShadow: isDark ? 'none' : '0 2px 8px rgba(92,26,27,0.08)',
+                    border: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(92,26,27,0.06)',
+                  }}
                 >
                   {hasFirebaseIcon ? (
-                    <img src={service.firebaseIcon} alt={service.label} className="w-full h-full object-contain" />
+                    <img src={service.firebaseIcon} alt={service.label} className="w-8 h-8 object-contain" />
                   ) : iconIsImage ? (
-                    <img src={service.icon} alt={service.label} className="w-full h-full object-contain" />
+                    <img src={service.icon} alt={service.label} className="w-8 h-8 object-contain" />
                   ) : shouldUseLucide && !shouldUseCustomSvg ? (
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: iconBgColor }}>
-                      <LucideIconRenderer iconName={service.icon!} color={sectionColor} />
-                    </div>
+                    <LucideIconRenderer iconName={service.icon!} color={sectionColor} />
                   ) : shouldUseCustomSvg ? (
-                    // Emoji icon that doesn't match Lucide - use custom SVG fallback from service-icons
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: iconBgColor }}>
-                      <LucideIconRenderer iconName={service.iconKey || 'default'} color={sectionColor} />
-                    </div>
+                    <LucideIconRenderer iconName={service.iconKey || 'default'} color={sectionColor} />
                   ) : fallbackIconSrc ? (
-                    <img src={fallbackIconSrc} alt={service.label} className="w-full h-full object-contain" />
+                    <img src={fallbackIconSrc} alt={service.label} className="w-8 h-8 object-contain" />
                   ) : (
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: iconBgColor }}>
-                      <LayoutGrid size={22} strokeWidth={2} color={sectionColor} />
-                    </div>
+                    <LayoutGrid size={22} strokeWidth={2} color={sectionColor} />
                   )}
                 </div>
                 <span
