@@ -97,7 +97,7 @@ export default function GamesScreen() {
 }
 
 function GamesScreenInner() {
-  const { user, categories, setActiveScreen } = useAppStore();
+  const { user, setActiveScreen } = useAppStore();
   const [games, setGames] = useState<ApiGame[]>([]);
   const [selectedGame, setSelectedGame] = useState<ApiGame | null>(null);
   const [catalogue, setCatalogue] = useState<ApiGameCatalogue[]>([]);
@@ -106,11 +106,16 @@ function GamesScreenInner() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [providerId, setProviderId] = useState<string>('');
+  const [providerId, setProviderId] = useState<string>('g2bulk');
   const [provider, setProvider] = useState<ApiProvider | null>(null);
   const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
 
-  // Load games from active API provider (Supabase)
+  // ====================================================================
+  // LOAD GAMES FROM STATIC CATALOG — no DB fetch needed!
+  // The catalog (games, images, packages, fields, servers) is baked
+  // into the APK at build time via src/data/g2bulk-catalog.json.
+  // Only runtime API calls (checkPlayerId, placeOrder) go to the server.
+  // ====================================================================
   useEffect(() => {
     let cancelled = false;
 
@@ -119,58 +124,60 @@ function GamesScreenInner() {
       setLoadError(null);
 
       try {
-        // Find the category with api-games screenType
-        // Categories from the store are ServiceCategory[] but may have dynamic fields
-        // from Supabase sections table attached as extra properties
-        const gamesCategory = (categories || []).find((c: any) =>
-          c.screenType === 'api-games' || c.type === 'games'
-        );
-        const pId = gamesCategory?.apiProviderId || '';
+        // Import the static catalog — this is bundled in the APK
+        const { getAllGames } = await import('@/lib/g2bulk-catalog');
+        if (cancelled) return;
 
-        if (!pId) {
-          // Try to find any enabled provider that supports games from Supabase
-          try {
-            const providers = await getApiProviders();
-            if (cancelled) return;
-            const gamesProvider = providers.find((p: ApiProvider) => p.enabled && p.supportsGames);
-            if (gamesProvider) {
-              setProviderId(gamesProvider.id);
-              const cache = await getCachedProviderData(gamesProvider.id);
-              if (cancelled) return;
-              setGames(cache.games || []);
-            } else {
-              // No games provider found — show empty state, not error
-              setGames([]);
-            }
-          } catch (error) {
-            console.error('Error loading games from Supabase:', error);
-            if (!cancelled) {
-              setLoadError('فشل تحميل مزود الألعاب');
-              setGames([]);
-            }
+        const staticGames = getAllGames();
+        console.log(`[games] Loaded ${staticGames.length} games from static catalog`);
+
+        // Map to the ApiGame format expected by the UI
+        const mappedGames: ApiGame[] = staticGames.map(g => ({
+          id: g.id,
+          code: g.code,
+          name: g.name,
+          name_ar: g.name,
+          image_url: g.local_image || g.image_url,  // prefer local bundled image
+          banner_url: g.local_image || g.image_url,
+          description: g.fields_notes || '',
+          provider_id: 'g2bulk',
+          enabled: true,
+          is_featured: false,
+          fields: g.required_fields,
+          servers: g.servers,
+          tags: [],
+        }));
+
+        if (!cancelled) {
+          setGames(mappedGames);
+          setLoading(false);
+        }
+
+        // Also load the provider (for markup percent) from DB — this is
+        // the ONLY DB call we make, and it's just to get the margin.
+        try {
+          const p = await getApiProvider('g2bulk');
+          if (!cancelled && p) {
+            setProvider(p);
           }
-        } else {
-          setProviderId(pId);
-          try {
-            const cache = await getCachedProviderData(pId);
-            if (cancelled) return;
-            setGames(cache.games || []);
-          } catch (error) {
-            console.error('Error loading cached provider data:', error);
-            if (!cancelled) {
-              setLoadError('فشل تحميل بيانات الألعاب');
-              setGames([]);
-            }
+        } catch (e) {
+          console.warn('[games] Could not load provider from DB, using default 15% margin');
+          if (!cancelled) {
+            setProvider({
+              id: 'g2bulk', name: 'G2Bulk', nameAr: 'G2Bulk', type: 'g2bulk',
+              apiKey: '', baseUrl: 'https://api.g2bulk.com', enabled: true,
+              markupPercent: 15, supportsProducts: true, supportsGames: true,
+              lastSync: null, balance: 0, balanceCurrency: 'USD',
+              description: '', descriptionAr: '', logo: '', color: '#5C1A1B',
+              createdAt: '', updatedAt: '', authHeaderName: 'X-API-Key', authHeaderPrefix: '',
+            });
           }
         }
       } catch (error: any) {
-        console.error('Error in loadGames:', error);
+        console.error('Error loading static catalog:', error);
         if (!cancelled) {
-          setLoadError(error.message || 'حدث خطأ أثناء تحميل الألعاب');
+          setLoadError('فشل تحميل الألعاب: ' + error.message);
           setGames([]);
-        }
-      } finally {
-        if (!cancelled) {
           setLoading(false);
         }
       }
@@ -181,7 +188,7 @@ function GamesScreenInner() {
     return () => {
       cancelled = true;
     };
-  }, [categories]);
+  }, []);
 
   // Load provider details when providerId changes (for markup display)
   useEffect(() => {
@@ -209,21 +216,28 @@ function GamesScreenInner() {
     setGameFields(null);
     setGameServers({});
 
-    if (!providerId) return;
-
+    // Load catalogue + fields + servers from the STATIC catalog (no API call)
     try {
-      const provider = await getApiProvider(providerId);
-      if (!provider) return;
+      const { getGameCatalogue } = await import('@/lib/g2bulk-catalog');
+      const staticCat = getGameCatalogue(game.code);
 
-      const [cat, fields, servers] = await Promise.all([
-        getGameCatalogue(provider, game.code).catch(() => []),
-        getGameFields(provider, game.code).catch(() => ({ fields: [], notes: '' })),
-        getGameServers(provider, game.code).catch(() => ({})),
-      ]);
+      // Map to the ApiGameCatalogue format
+      const mappedCat: ApiGameCatalogue[] = staticCat.map(c => ({
+        id: c.id,
+        name: c.name,
+        name_ar: c.name,
+        amount: c.amount,
+        currency: 'USD',
+        image_url: '',
+        provider_id: 'g2bulk',
+      }));
 
-      setCatalogue(cat || []);
-      setGameFields(fields);
-      setGameServers(servers || {});
+      setCatalogue(mappedCat);
+      setGameFields({
+        fields: game.fields || [],
+        notes: game.description || '',
+      });
+      setGameServers(game.servers || {});
     } catch (error: any) {
       toast.error(`فشل تحميل بيانات اللعبة: ${error.message}`);
     }
