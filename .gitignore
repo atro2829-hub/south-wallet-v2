@@ -99,3 +99,7 @@ tool-results/
 public/data/sections.json
 south-admin/public/data/sections.json
 
+
+# Game images — load from CDN, do not bundle in APK
+public/images/games/
+

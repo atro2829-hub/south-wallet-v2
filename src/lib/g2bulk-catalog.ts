@@ -86,9 +86,9 @@ export function calculateSellPrice(costPrice: number, marginPercent: number): nu
 }
 
 // ─── Image URL helper ───────────────────────────────────────────────
-// Prefer local image (bundled in APK), fall back to CDN
+// Images load from G2Bulk CDN (lazy loading) — NOT bundled in APK.
+// This keeps the APK small (~10MB) while still showing game images.
 export function getGameImageUrl(game: G2BulkGame): string {
-  if (game.local_image) return game.local_image;
   if (game.image_url) {
     return game.image_url.startsWith('http')
       ? game.image_url
