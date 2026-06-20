@@ -168,7 +168,7 @@ export function useSupabaseSync() {
       // KYC pending = submitted (also include verified/rejected so admin can review history)
       const kycUsers = users.filter(
         (u) =>
-          u.kyc_status === 'submitted' ||
+          u.kyc_status === 'pending' ||
           u.kyc_status === 'verified' ||
           u.kyc_status === 'rejected'
       );
@@ -382,7 +382,7 @@ export function useSupabaseSync() {
 
             // Update KYC list if relevant
             if (
-              record.kyc_status === 'submitted' ||
+              record.kyc_status === 'pending' ||
               record.kyc_status === 'verified' ||
               record.kyc_status === 'rejected'
             ) {
@@ -406,7 +406,7 @@ export function useSupabaseSync() {
             // Update KYC list
             const kycCurrent = useAdminStore.getState().kycPendingUsers as DbUser[];
             const isKycRelevant =
-              record.kyc_status === 'submitted' ||
+              record.kyc_status === 'pending' ||
               record.kyc_status === 'verified' ||
               record.kyc_status === 'rejected';
 

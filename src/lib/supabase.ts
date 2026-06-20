@@ -524,63 +524,45 @@ export const supabaseService = {
    */
   async ensureUser(firebaseUid: string, data: {
     email?: string; phone?: string; displayName?: string;
-    firstName?: string; secondName?: string; thirdName?: string; familyName?: string;
-    avatar?: string; role?: string; userId?: string; nationalId?: string;
+    avatar?: string; role?: string; userId?: string;
   }) {
     try {
       const existing = await supabaseService.getUserByFirebaseUid(firebaseUid);
-
-      // Map the Firebase `userId` (6-digit account number) → Supabase `card_number`.
-      // Use NULL when not provided so partial unique indexes don't collide.
-      const cardNumber = data.userId && data.userId.trim() !== '' ? data.userId.trim() : null;
-      const nationalId = data.nationalId && data.nationalId.trim() !== '' ? data.nationalId.trim() : null;
 
       const userData: Record<string, unknown> = {
         firebase_uid: firebaseUid,
         email: data.email && data.email.trim() !== '' ? data.email.trim() : null,
         phone: data.phone && data.phone.trim() !== '' ? data.phone.trim() : null,
-        display_name: data.displayName || '',
-        first_name: data.firstName || '',
-        second_name: data.secondName || '',
-        third_name: data.thirdName || '',
-        family_name: data.familyName || '',
-        avatar_url: data.avatar || '',
-        role: data.role || 'user',
-        national_id: nationalId,
+        display_name: data.displayName || data.phone || '',
+        avatar_url: data.avatar || null,
+        role: (data.role === 'admin' || data.role === 'support') ? 'admin' : 'user',
         is_active: true,
         is_blocked: false,
         updated_at: new Date().toISOString(),
       };
 
       if (existing) {
-        // Update existing user. Only set card_number if a real value was provided
-        // AND the existing row doesn't already have one (don't overwrite a real number).
-        if (cardNumber && !existing.card_number) {
-          userData.card_number = cardNumber;
-        }
         const { error } = await supabase
           .from('users')
           .update(userData)
-          .eq('id', existing.id);
+          .eq('firebase_uid', firebaseUid);
         if (error) {
-          console.error('[ensureUser] update failed:', error.code, error.message, JSON.stringify(userData));
+          console.error('[ensureUser] update failed:', error.code, error.message);
         }
       } else {
-        // Create new user. Generate a 6-digit card_number if none was provided.
-        let finalCardNumber = cardNumber;
-        if (!finalCardNumber) {
-          finalCardNumber = await supabaseService.generateUniqueCardNumber();
-        }
-
+        // Create new user with required fields for new schema
         userData.id = crypto.randomUUID();
-        userData.card_number = finalCardNumber;
-        userData.card_issued_at = new Date().toISOString();
-        userData.kyc_status = 'pending';
+        userData.password_hash = 'firebase_managed'; // NOT NULL column
+        userData.kyc_status = 'none'; // new ENUM default
+        userData.balance_yer = 0;
+        userData.balance_sar = 0;
+        userData.balance_usd = 0;
         userData.created_at = new Date().toISOString();
+        userData.metadata = {};
 
         const { error } = await supabase.from('users').insert(userData);
         if (error) {
-          console.error('[ensureUser] insert failed:', error.code, error.message, JSON.stringify(userData));
+          console.error('[ensureUser] insert failed:', error.code, error.message);
         }
       }
     } catch (err) {
@@ -601,7 +583,7 @@ export const supabaseService = {
       const { data, error } = await supabase
         .from('users')
         .select('id')
-        .eq('card_number', candidate)
+        .eq('display_id', candidate)
         .maybeSingle();
       if (!error && !data) {
         return candidate;
@@ -949,29 +931,50 @@ export const supabaseService = {
   },
 
   // --- KYC Documents ---
-  async submitKycDocument(doc: { user_id: string; document_type: string; document_url: string }) {
-    const { data, error } = await supabase.from('kyc_documents').insert(doc).select().single();
+  async submitKycDocument(doc: { user_id: string; doc_type: string; doc_url: string }) {
+    const { data, error } = await supabase.from('kyc_documents').insert({
+      user_id: doc.user_id,
+      doc_type: doc.doc_type,
+      doc_url: doc.doc_url,
+    }).select().single();
     if (error) throw error;
     return data;
   },
 
   // --- Support Tickets ---
-  async createSupportTicket(ticket: { user_id: string; subject: string; category?: string }) {
-    const { data, error } = await supabase.from('support_tickets').insert(ticket).select().single();
+  async createSupportTicket(ticket: { user_id: string; subject: string; body: string; category?: string; priority?: string }) {
+    const { data, error } = await supabase.from('support_tickets').insert({
+      user_id: ticket.user_id,
+      subject: ticket.subject,
+      body: ticket.body,
+      category: (ticket.category as any) || 'general',
+      priority: (ticket.priority as any) || 'normal',
+    }).select().single();
     if (error) throw error;
     return data;
   },
 
   // --- Balance Update via RPC (safe, atomic) ---
   async updateBalance(userId: string, currency: string, amount: number, operation: 'add' | 'subtract' = 'add') {
-    const { data, error } = await supabase.rpc('update_user_balance', {
-      p_user_id: userId,
-      p_currency: currency,
-      p_amount: amount,
-      p_operation: operation,
-    });
+    // Use direct UPDATE instead of RPC (RPC may not exist in new schema)
+    const col = `balance_${currency.toLowerCase()}`;
+    const { data: user, error: fetchErr } = await supabase
+      .from('users')
+      .select(col)
+      .eq('id', userId)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    if (!user) throw new Error('User not found');
+
+    const currentBalance = Number(user[col]) || 0;
+    const newBalance = operation === 'add' ? currentBalance + amount : currentBalance - amount;
+
+    const { error } = await supabase
+      .from('users')
+      .update({ [col]: newBalance, updated_at: new Date().toISOString() })
+      .eq('id', userId);
     if (error) throw error;
-    return data as number;
+    return newBalance;
   },
 
   // --- Currency Conversion via RPC ---
