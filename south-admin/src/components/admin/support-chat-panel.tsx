@@ -326,7 +326,7 @@ function LiveChatSection() {
 
   const loadConversations = useCallback(async () => {
     const { data, error } = await supabaseAdmin
-      .from('support_livechat')
+      .from('live_chats')
       .select('*')
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(100);
@@ -337,19 +337,19 @@ function LiveChatSection() {
 
   const loadMessages = useCallback(async (chatId: string) => {
     const { data, error } = await supabaseAdmin
-      .from('livechat_messages')
+      .from('live_chat_messages')
       .select('*')
       .eq('chat_id', chatId)
       .order('created_at', { ascending: true });
     if (error) { console.warn('[livechat] msgs:', error.message); setMessages([]); return; }
     setMessages((data || []) as LiveMessage[]);
     // Mark user messages as read by admin
-    await supabaseAdmin.from('livechat_messages')
+    await supabaseAdmin.from('live_chat_messages')
       .update({ is_read: true })
       .eq('chat_id', chatId)
       .eq('sender_type', 'user');
     // Reset unread_admin counter
-    await supabaseAdmin.from('support_livechat')
+    await supabaseAdmin.from('live_chats')
       .update({ unread_admin: 0 })
       .eq('id', chatId);
   }, []);
@@ -358,8 +358,8 @@ function LiveChatSection() {
   useEffect(() => {
     loadConversations();
     const ch = supabaseAdmin.channel(`admin-livechat-${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat' }, () => loadConversations())
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload: any) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_chats' }, () => loadConversations())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_chat_messages' }, (payload: any) => {
         // Only reload messages if the new message belongs to the selected chat
         if (selectedChatId && payload.new?.chat_id === selectedChatId) {
           loadMessages(selectedChatId);
@@ -388,7 +388,7 @@ function LiveChatSection() {
       const conv = conversations.find(c => c.id === selectedChatId);
       if (!conv) { showToast('المحادثة غير موجودة', 'error'); setSending(false); return; }
 
-      const { error } = await supabaseAdmin.from('livechat_messages').insert({
+      const { error } = await supabaseAdmin.from('live_chat_messages').insert({
         chat_id: selectedChatId,
         sender_id: adminUser.uid,
         sender_type: 'admin',
@@ -399,7 +399,7 @@ function LiveChatSection() {
       if (error) throw error;
 
       // Update conversation
-      await supabaseAdmin.from('support_livechat')
+      await supabaseAdmin.from('live_chats')
         .update({
           last_message: replyText.trim(),
           last_message_at: new Date().toISOString(),

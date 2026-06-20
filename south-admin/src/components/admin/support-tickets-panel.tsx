@@ -292,7 +292,7 @@ export default function SupportTicketsPanel() {
                     <div className={`max-w-[75%] p-3 rounded-2xl text-sm ${
                       msg.sender_type === 'admin'
                         ? 'bg-[#7B1A30]/20 text-foreground rounded-bl-sm'
-                        : msg.sender_type === 'system'
+                        : msg.sender_type === 'bot'
                         ? 'bg-muted/50 text-muted-foreground rounded-bl-sm rounded-br-sm text-center max-w-full'
                         : 'bg-muted text-foreground rounded-br-sm'
                     }`}>

@@ -355,13 +355,13 @@ export default function KYCPanel() {
                   <>
                     {/* ID Front */}
                     {(() => {
-                      const doc = kycDocs.find((d: any) => d.document_type === 'national_id_front');
+                      const doc = kycDocs.find((d: any) => d.doc_type === 'national_id_front');
                       return (
                         <div className="space-y-1.5">
                           <Label className="text-muted-foreground flex items-center gap-1.5"><FileText size={14} />صورة البطاقة / الهوية (الوجه)</Label>
-                          {doc && doc.document_url ? (
-                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.document_url)}>
-                              <img src={doc.document_url} alt="صورة الهوية - الوجه" className="w-full max-h-64 object-contain bg-white" />
+                          {doc && doc.doc_url ? (
+                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.doc_url)}>
+                              <img src={doc.doc_url} alt="صورة الهوية - الوجه" className="w-full max-h-64 object-contain bg-white" />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
                               </div>
@@ -375,13 +375,13 @@ export default function KYCPanel() {
 
                     {/* ID Back */}
                     {(() => {
-                      const doc = kycDocs.find((d: any) => d.document_type === 'national_id_back');
+                      const doc = kycDocs.find((d: any) => d.doc_type === 'national_id_back');
                       return (
                         <div className="space-y-1.5">
                           <Label className="text-muted-foreground flex items-center gap-1.5"><CreditCard size={14} />صورة خلف البطاقة</Label>
-                          {doc && doc.document_url ? (
-                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.document_url)}>
-                              <img src={doc.document_url} alt="خلف البطاقة" className="w-full max-h-64 object-contain bg-white" />
+                          {doc && doc.doc_url ? (
+                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.doc_url)}>
+                              <img src={doc.doc_url} alt="خلف البطاقة" className="w-full max-h-64 object-contain bg-white" />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
                               </div>
@@ -395,13 +395,13 @@ export default function KYCPanel() {
 
                     {/* Selfie */}
                     {(() => {
-                      const doc = kycDocs.find((d: any) => d.document_type === 'selfie');
+                      const doc = kycDocs.find((d: any) => d.doc_type === 'selfie');
                       return (
                         <div className="space-y-1.5">
                           <Label className="text-muted-foreground flex items-center gap-1.5"><Camera size={14} />الصورة الشخصية (سيلفي)</Label>
-                          {doc && doc.document_url ? (
-                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.document_url)}>
-                              <img src={doc.document_url} alt="الصورة الشخصية" className="w-full max-h-64 object-contain bg-white" />
+                          {doc && doc.doc_url ? (
+                            <div className="relative mt-1 rounded-xl overflow-hidden border border-border cursor-pointer group" onClick={() => setPreviewImage(doc.doc_url)}>
+                              <img src={doc.doc_url} alt="الصورة الشخصية" className="w-full max-h-64 object-contain bg-white" />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-full p-2"><ZoomIn size={24} color="#FFF" /></div>
                               </div>

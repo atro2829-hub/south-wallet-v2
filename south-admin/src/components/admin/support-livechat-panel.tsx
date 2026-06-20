@@ -58,8 +58,8 @@ export default function SupportLiveChatPanel() {
   const loadChats = async () => {
     try {
       const { data: chatData, error: chatError } = await supabase
-        .from('support_livechat')
-        .select('*, users!support_livechat_user_id_fkey(display_name, phone, email)')
+        .from('live_chats')
+        .select('*, users!live_chats_user_id_fkey(display_name, phone, email)')
         .order('updated_at', { ascending: false });
 
       if (chatError) throw chatError;
@@ -73,7 +73,7 @@ export default function SupportLiveChatPanel() {
       // Load messages for all chats
       const chatIds = chatData.map(c => c.id);
       const { data: messagesData, error: messagesError } = await supabase
-        .from('livechat_messages')
+        .from('live_chat_messages')
         .select('*')
         .in('chat_id', chatIds)
         .order('created_at', { ascending: true });
@@ -135,7 +135,7 @@ export default function SupportLiveChatPanel() {
     // Subscribe to livechat changes
     const livechatChannel = supabase
       .channel('admin-support-livechat')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_chats' }, () => {
         loadChats();
       })
       .subscribe();
@@ -143,7 +143,7 @@ export default function SupportLiveChatPanel() {
     // Subscribe to livechat messages
     const livechatMessagesChannel = supabase
       .channel('admin-livechat-messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_chat_messages' }, (payload) => {
         // Reload all chats when a new message arrives
         loadChats();
         // Update selected chat if viewing
@@ -202,7 +202,7 @@ export default function SupportLiveChatPanel() {
         : '00000000-0000-0000-0000-000000000001'; // sentinel for admin
 
       const { error } = await supabase
-        .from('livechat_messages')
+        .from('live_chat_messages')
         .insert({
           chat_id: selectedChat.id,
           sender_id: adminUuid,
@@ -216,7 +216,7 @@ export default function SupportLiveChatPanel() {
 
       // FIX: column is `admin_id`, not `assigned_to`. Also update last_message.
       await supabase
-        .from('support_livechat')
+        .from('live_chats')
         .update({
           admin_id: adminUuid,
           status: 'active',
@@ -241,7 +241,7 @@ export default function SupportLiveChatPanel() {
     if (!selectedChat) return;
     try {
       const { error } = await supabase
-        .from('support_livechat')
+        .from('live_chats')
         .update({ status: 'closed', updated_at: new Date().toISOString() })
         .eq('id', selectedChat.id);
 

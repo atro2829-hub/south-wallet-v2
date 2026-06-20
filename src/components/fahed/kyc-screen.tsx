@@ -173,18 +173,18 @@ export default function KYCScreen() {
       //    Status starts as 'pending' — an admin will manually review and
       //    approve/reject each one from the admin app's KYC panel.
       const docsToInsert = [
-        { document_type: 'national_id_front', document_url: idFrontUrl },
-        { document_type: 'national_id_back',  document_url: idBackUrl },
-        { document_type: 'selfie',            document_url: selfieUrl },
-      ].filter(d => d.document_url);
+        { doc_type: 'national_id_front', doc_url: idFrontUrl },
+        { doc_type: 'national_id_back',  doc_url: idBackUrl },
+        { doc_type: 'selfie',            doc_url: selfieUrl },
+      ].filter(d => d.doc_url);
 
       if (docsToInsert.length > 0) {
         const { error: docsError } = await supabase
           .from('kyc_documents')
           .insert(docsToInsert.map(d => ({
             user_id: user.id,
-            document_type: d.document_type,
-            document_url: d.document_url,
+            doc_type: d.doc_type,
+            doc_url: d.doc_url,
             status: 'pending',
           })));
         if (docsError) throw docsError;

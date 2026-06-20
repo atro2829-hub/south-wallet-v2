@@ -189,7 +189,7 @@ export interface DbSupportMessage {
   id: string;
   ticket_id: string;
   sender_id: string | null;
-  sender_type: 'user' | 'admin' | 'system';
+  sender_type: 'user' | 'admin' | 'bot';
   message: string;
   attachments: unknown[];
   is_read: boolean;
@@ -260,7 +260,7 @@ export interface DbLivechatMessage {
   id: string;
   chat_id: string;
   sender_id: string;
-  sender_type: 'user' | 'admin' | 'system';
+  sender_type: 'user' | 'admin' | 'bot';
   message: string;
   message_type: 'text' | 'image' | 'file' | 'system';
   attachments: unknown[];

@@ -268,7 +268,7 @@ export default function SupportScreen() {
     try {
       // Find or create active chat
       const { data: chatData, error: chatError } = await supabase
-        .from('support_livechat')
+        .from('live_chats')
         .select('*')
         .eq('user_id', user.id)
         .neq('status', 'closed')
@@ -284,7 +284,7 @@ export default function SupportScreen() {
 
         // Load messages for this chat
         const { data: msgsData, error: msgsError } = await supabase
-          .from('livechat_messages')
+          .from('live_chat_messages')
           .select('*')
           .eq('chat_id', chat.id)
           .order('created_at', { ascending: true });
@@ -321,7 +321,7 @@ export default function SupportScreen() {
     // Subscribe to livechat changes — .on() BEFORE .subscribe()
     const livechatChannel = supabase
       .channel(`user-livechat-${user.id}-${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat', filter: `user_id=eq.${user.id}` }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_chats', filter: `user_id=eq.${user.id}` }, () => {
         loadLiveChat();
       })
       .subscribe();
@@ -330,7 +330,7 @@ export default function SupportScreen() {
     // Use ref-based chatId check to avoid stale closure and dependency loop
     const livechatMessagesChannel = supabase
       .channel(`user-livechat-messages-${user.id}-${Date.now()}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_chat_messages' }, (payload) => {
         const currentChatId = activeChatIdRef.current;
         if (currentChatId && payload.new.chat_id === currentChatId) {
           const newMsg: LiveChatMessage = {
@@ -489,12 +489,12 @@ export default function SupportScreen() {
       let chatId = activeChatId;
 
       // Create a new chat if none exists
-      // FIX: removed `user_name` column (doesn't exist on support_livechat).
+      // FIX: removed `user_name` column (doesn't exist on live_chats).
       // Schema: user_id, admin_id, status, last_message, last_message_at,
       //         unread_user, unread_admin, created_at, updated_at
       if (!chatId) {
         const { data: newChat, error: chatError } = await supabase
-          .from('support_livechat')
+          .from('live_chats')
           .insert({
             user_id: user.id,
             status: 'waiting',
@@ -513,11 +513,11 @@ export default function SupportScreen() {
       }
 
       // Insert message — use snake_case column names that match the schema:
-      // livechat_messages columns: id, chat_id, sender_id, sender_type, message,
+      // live_chat_messages columns: id, chat_id, sender_id, sender_type, message,
       // message_type, attachments (JSONB), is_read, created_at
       // FIX: attachments is JSONB — wrap string in array.
       const { error: msgError } = await supabase
-        .from('livechat_messages')
+        .from('live_chat_messages')
         .insert({
           chat_id: chatId,
           sender_id: user.id,
@@ -542,11 +542,11 @@ export default function SupportScreen() {
 
       // Update chat's last_message + unread_admin count + timestamp
       await supabase
-        .from('support_livechat')
+        .from('live_chats')
         .update({
           last_message: messageText || (imageToSend ? '📷 صورة' : ''),
           last_message_at: new Date().toISOString(),
-          unread_admin: (await supabase.from('support_livechat').select('unread_admin').eq('id', chatId).maybeSingle()).data?.unread_admin + 1 || 1,
+          unread_admin: (await supabase.from('live_chats').select('unread_admin').eq('id', chatId).maybeSingle()).data?.unread_admin + 1 || 1,
           updated_at: new Date().toISOString(),
         })
         .eq('id', chatId);
