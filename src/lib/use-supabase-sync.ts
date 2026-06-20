@@ -56,32 +56,35 @@ function mapDbUserToStore(dbUser: DbUser, firebaseUid: string) {
 }
 
 /** Map a Supabase DbTransaction row to the store's Transaction shape. */
-function mapDbTransactionToStore(dbTx: DbTransaction) {
+function mapDbTransactionToStore(dbTx: any) {
   return {
     id: dbTx.id,
     fromUserId: dbTx.from_user_id || '',
     toUserId: dbTx.to_user_id || '',
-    amount: dbTx.amount || 0,
+    amount: Number(dbTx.amount) || 0,
     currency: dbTx.currency || 'YER',
     type: dbTx.type || 'order',
-    status: dbTx.status || 'completed',
+    status: dbTx.status === 'reversed' ? 'refunded' : (dbTx.status || 'completed'),
     description: dbTx.description || '',
     createdAt: dbTx.created_at || new Date().toISOString(),
   };
 }
 
 /** Map a Supabase DbNotification row to the store's Notification shape. */
-function mapDbNotificationToStore(dbNotif: DbNotification) {
+function mapDbNotificationToStore(dbNotif: any) {
+  // New schema: entity_type, entity_id, action_url, metadata
+  // Old schema: navigation_target, navigation_params, data
+  const meta = dbNotif.metadata || {};
   return {
     id: dbNotif.id,
     title: dbNotif.title || '',
     body: dbNotif.body || '',
-    type: (dbNotif.type || 'info') as 'info' | 'transaction' | 'security' | 'promo',
+    type: (dbNotif.type || 'system') as 'info' | 'transaction' | 'security' | 'promo',
     isRead: dbNotif.is_read || false,
     createdAt: dbNotif.created_at || new Date().toISOString(),
-    navigationTarget: dbNotif.navigation_target || undefined,
-    navigationParams: dbNotif.navigation_params || undefined,
-    data: dbNotif.data || undefined,
+    navigationTarget: dbNotif.action_url || meta.navigation_target || undefined,
+    navigationParams: meta.navigation_params || undefined,
+    data: meta || undefined,
   };
 }
 

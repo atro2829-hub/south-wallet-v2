@@ -493,32 +493,26 @@ function GamePurchaseView({
           console.error('Error deducting balance:', balanceError);
         }
 
-        // Create order in Supabase
+        // Create order in Supabase — uses new schema column names
         try {
           await supabaseService.createOrder({
             user_id: user.userId || user.id,
             provider_id: providerId,
-            provider_name: provider.name,
-            package_id: '',
-            package_name: selectedCatalogue.name,
-            category_id: '',
-            category_name: game.name,
-            customer_input: playerId,
+            product_code: game.code,
+            product_name: selectedCatalogue.name,
+            category_id: null,
             amount: finalPrice,
             currency: 'USD',
             cost_price: selectedCatalogue.amount,
-            cost_currency: 'USD',
-            commission_amount: finalPrice - selectedCatalogue.amount,
-            commission_type: 'percentage',
-            execution_type: 'api',
+            sell_price: finalPrice,
+            margin_percent: ((finalPrice - selectedCatalogue.amount) / selectedCatalogue.amount) * 100,
+            execution_type: 'auto',
             status: result.order.status === 'PENDING' ? 'pending' : 'processing',
-            api_provider_id: providerId,
-            api_product_id: '',
+            game_player_id: playerId,
+            game_player_name: playerValid?.name || '',
             api_order_id: String(result.order.order_id),
             api_response: result,
-            result_code: '',
-            result_message: result.message || '',
-            result_pin_code: '',
+            api_status: result.order.status || '',
           });
         } catch (orderError: any) {
           console.error('Error creating order record:', orderError);
@@ -588,8 +582,8 @@ function GamePurchaseView({
               .from('orders')
               .update({
                 status: 'completed',
-                g2bulk_order_status: 'COMPLETED',
-                result_message: status.message || '',
+                api_status: 'COMPLETED',
+                completed_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               })
               .eq('api_order_id', apiOrderId);
@@ -618,8 +612,8 @@ function GamePurchaseView({
               .from('orders')
               .update({
                 status: 'refunded',
-                g2bulk_order_status: 'FAILED',
-                result_message: status.message || 'Order failed, balance refunded',
+                api_status: 'FAILED',
+                last_error: status.message || 'Order failed',
                 updated_at: new Date().toISOString(),
               })
               .eq('api_order_id', apiOrderId);

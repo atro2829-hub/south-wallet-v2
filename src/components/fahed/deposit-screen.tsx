@@ -591,28 +591,22 @@ export default function DepositScreen() {
         request.notes = `إيداع ${selectedCrypto?.symbol || ''} - شبكة: ${activeNetworkName} - العنوان: ${depositAddress} - Hash: ${cryptoTxHash.trim()}`;
       }
 
-      // Save to Supabase
+      // Save to Supabase — uses new schema column names
       await supabaseService.createDepositRequest({
-        id: requestId,
         user_id: user.id,
         amount: depositAmountNum + promoDiscount,
         currency: depositCurrency,
-        method: depositMethod,
-        bank_name: depositMethod === 'bank_transfer' ? (banks.find(b => b.id === selectedBankId)?.bankName || '') : '',
-        bank_account: '',
+        method: depositMethod === 'bank_transfer' ? 'bank' : depositMethod === 'card' ? 'gift_code' : 'crypto',
+        bank_id: depositMethod === 'bank_transfer' ? selectedBankId : null,
         sender_name: user.name,
-        transfer_receipt_url: depositMethod === 'bank_transfer' ? receiptImage : '',
-        crypto_network: depositMethod === 'crypto' ? (request.cryptoNetwork || '') : '',
-        crypto_wallet_address: depositMethod === 'crypto' ? (request.cryptoDepositAddress || '') : '',
-        crypto_tx_hash: depositMethod === 'crypto' ? (request.cryptoTxHash || '') : '',
+        receipt_url: depositMethod === 'bank_transfer' ? receiptImage : null,
+        crypto_network: depositMethod === 'crypto' ? (request.cryptoNetwork || '') : null,
+        crypto_txhash: depositMethod === 'crypto' ? (request.cryptoTxHash || '') : null,
+        crypto_from_address: depositMethod === 'crypto' ? (request.cryptoDepositAddress || '') : null,
         status: 'pending',
-        rejection_reason: '',
-        admin_notes: request.notes || '',
-        reviewed_by: null,
-        reviewed_at: null,
-        transaction_id: null,
-        updated_at: new Date().toISOString(),
-      });
+        notes: request.notes || null,
+        metadata: {},
+      } as any);
 
       // Send notification to admin about new deposit
       try {
@@ -684,28 +678,21 @@ export default function DepositScreen() {
         request.notes = `سحب ${selectedCrypto?.symbol || ''} - شبكة: ${activeNetworkName} - محفظة: ${cryptoWalletAddress.trim()}`;
       }
 
-      // Save to Supabase
+      // Save to Supabase — uses new schema column names
       await supabaseService.createWithdrawRequest({
-        id: requestId,
         user_id: user.id,
         amount: withdrawAmountNum,
         currency: withdrawCurrency,
-        method: withdrawMethod,
-        bank_name: withdrawMethod === 'bank_transfer' ? bankName : '',
-        bank_account: withdrawMethod === 'bank_transfer' ? bankAccountNumber : '',
-        bank_iban: '',
-        crypto_network: withdrawMethod === 'crypto' ? (request.cryptoNetwork || '') : '',
-        crypto_wallet_address: withdrawMethod === 'crypto' ? (request.cryptoWalletAddress || '') : '',
+        method: withdrawMethod === 'bank_transfer' ? 'bank' : withdrawMethod as any,
+        account_name: withdrawMethod === 'bank_transfer' ? user.name : null,
+        account_number: withdrawMethod === 'bank_transfer' ? bankAccountNumber : null,
+        iban: null,
+        crypto_network: withdrawMethod === 'crypto' ? (request.cryptoNetwork || '') : null,
+        crypto_address: withdrawMethod === 'crypto' ? (request.cryptoWalletAddress || '') : null,
         status: 'pending',
-        rejection_reason: '',
-        admin_notes: request.notes || '',
-        reviewed_by: null,
-        reviewed_at: null,
-        processed_by: null,
-        processed_at: null,
-        transaction_id: null,
-        updated_at: new Date().toISOString(),
-      });
+        notes: request.notes || null,
+        metadata: {},
+      } as any);
 
       // Send notification to admin about new withdraw request
       try {

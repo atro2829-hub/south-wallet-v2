@@ -356,23 +356,16 @@ export default function EscrowScreen() {
         .from('escrow_transactions')
         .insert({
           // Creator is buyer OR seller depending on formRole.
-          // The OTHER party's id is left NULL until they join via the code.
           buyer_id: formRole === 'buyer' ? userId : null,
           seller_id: formRole === 'seller' ? userId : null,
-          buyer_name: formRole === 'buyer' ? userName : '',
-          seller_name: formRole === 'seller' ? userName : '',
-          title: formTitle.trim(),
+          category_id: formEscrowCategory || null,
+          category_name: formTitle.trim(), // NOT NULL — use the title as category_name
           description: formDescription.trim(),
           amount,
           currency: formCurrency,
-          category: formEscrowCategory || '',
-          item_description: formDescription.trim(),
-          status: 'pending',
-          buyer_confirmed: false,
-          seller_confirmed: false,
-          reference_code: joinCode,
+          status: 'waiting',
           join_code: joinCode,
-          join_code_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
         })
         .select()
         .single();

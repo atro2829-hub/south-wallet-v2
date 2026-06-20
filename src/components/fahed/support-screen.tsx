@@ -192,8 +192,8 @@ export default function SupportScreen() {
             sender: (m.sender_type === 'admin' || m.sender_role === 'admin') ? 'support' as const : 'user' as const,
             text: m.message || '',
             time: m.created_at || new Date().toISOString(),
-            image: m.attachments || m.attachment_url || undefined,
-            senderName: m.sender_name || undefined,
+            image: m.attachment_url || undefined,
+            senderName: undefined,
           }));
 
         return {
@@ -242,8 +242,8 @@ export default function SupportScreen() {
             sender: (payload.new.sender_type === 'admin' || payload.new.sender_role === 'admin') ? 'support' : 'user',
             text: payload.new.message || '',
             time: payload.new.created_at || new Date().toISOString(),
-            image: payload.new.attachments || payload.new.attachment_url || undefined,
-            senderName: payload.new.sender_name || undefined,
+            image: payload.new.attachment_url || undefined,
+            senderName: undefined,
           };
           setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
         }
@@ -296,8 +296,8 @@ export default function SupportScreen() {
           sender: (m.sender_type === 'admin') ? 'admin' as const : 'user' as const,
           text: m.message || m.content || '',  // schema column is `message`, fallback to `content` for old data
           time: m.created_at || new Date().toISOString(),
-          adminName: m.sender_type === 'admin' ? (m.sender_name || 'فريق الدعم') : '',
-          image: m.attachments || m.attachment_url || undefined,  // schema column is `attachments`
+          adminName: m.sender_type === 'admin' ? ('فريق الدعم') : '',
+          image: m.attachment_url || undefined,  // schema column is `attachments`
         }));
         setChatMessages(formatted);
       } else {
@@ -338,8 +338,8 @@ export default function SupportScreen() {
             sender: (payload.new.sender_type === 'admin') ? 'admin' : 'user',
             text: payload.new.message || payload.new.content || '',  // schema: `message`
             time: payload.new.created_at || new Date().toISOString(),
-            adminName: payload.new.sender_type === 'admin' ? (payload.new.sender_name || 'فريق الدعم') : '',
-            image: payload.new.attachments || payload.new.attachment_url || undefined,  // schema: `attachments`
+            adminName: payload.new.sender_type === 'admin' ? ('فريق الدعم') : '',
+            image: payload.new.attachment_url || undefined,  // schema: `attachments`
           };
           setChatMessages(prev => {
             // Avoid duplicates
@@ -386,7 +386,7 @@ export default function SupportScreen() {
           body: newMessage,
           category: newCategory,
           status: 'open',
-          priority: 'medium',
+          priority: 'normal',
         })
         .select()
         .single();
@@ -401,7 +401,7 @@ export default function SupportScreen() {
           sender_id: user.id,
           sender_type: 'user',
           message: newMessage,
-          attachments: newImage ? [newImage] : [],
+          attachment_url: newImage || null,
           is_read: false,
         });
 

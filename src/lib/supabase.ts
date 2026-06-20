@@ -73,58 +73,61 @@ export interface DbUser {
 
 export interface DbTransaction {
   id: string;
+  reference_num: string;
   user_id: string;
   from_user_id: string | null;
   to_user_id: string | null;
+  type: 'transfer' | 'deposit' | 'withdraw' | 'order' | 'exchange' | 'escrow' | 'investment' | 'gift_code' | 'refund' | 'adjustment';
+  direction: 'credit' | 'debit';
   amount: number;
   currency: 'YER' | 'SAR' | 'USD';
-  fee: number;
-  fee_currency: string;
-  type: 'transfer' | 'deposit' | 'withdraw' | 'order' | 'recharge' | 'exchange' | 'gift' | 'promo' | 'commission' | 'refund' | 'investment';
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'refunded';
+  fee_amount: number;
+  status: 'pending' | 'completed' | 'failed' | 'reversed';
+  balance_before: number;
+  balance_after: number;
+  source_id: string | null;
+  source_type: string | null;
   description: string;
-  reference_number: string;
-  receipt_data: Record<string, unknown>;
-  sender_name: string;
-  sender_phone: string;
-  receiver_name: string;
-  receiver_phone: string;
-  receiver_card_number: string;
-  api_provider_id: string;
-  api_order_id: string;
-  created_at: string;
-  updated_at: string;
+  admin_note: string | null;
+  ip_address: string | null;
+  device_info: string | null;
+  metadata: Record<string, unknown>;
   completed_at: string | null;
+  created_at: string;
 }
 
 export interface DbOrder {
   id: string;
+  order_num: string;
   user_id: string;
-  provider_id: string;
-  provider_name: string;
-  package_id: string;
-  package_name: string;
-  category_id: string;
-  category_name: string;
-  customer_input: string;
+  category_id: string | null;
+  provider_id: string | null;
+  product_code: string;
+  product_name: string;
   amount: number;
   currency: 'YER' | 'SAR' | 'USD';
   cost_price: number;
-  cost_currency: string;
-  commission_amount: number;
-  commission_type: string;
-  execution_type: 'manual' | 'auto' | 'api';
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'refunded';
-  api_provider_id: string;
-  api_product_id: string;
-  api_order_id: string;
-  api_response: Record<string, unknown>;
-  result_code: string;
-  result_message: string;
-  result_pin_code: string;
+  sell_price: number;
+  margin_percent: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'refunded';
+  execution_type: 'auto' | 'manual';
+  game_player_id: string | null;
+  game_player_name: string | null;
+  game_zone_id: string | null;
+  game_server: string | null;
+  usdt_wallet_address: string | null;
+  usdt_network: string | null;
+  phone_number: string | null;
+  api_order_id: string | null;
+  api_response: Record<string, unknown> | null;
+  api_status: string | null;
+  retry_count: number;
+  last_error: string | null;
   transaction_id: string | null;
-  processed_by: string | null;
-  processed_at: string | null;
+  admin_note: string | null;
+  reviewed_by: string | null;
+  metadata: Record<string, unknown>;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -134,20 +137,21 @@ export interface DbDepositRequest {
   user_id: string;
   amount: number;
   currency: 'YER' | 'SAR' | 'USD';
-  method: 'bank_transfer' | 'crypto' | 'cash' | 'card' | 'agent';
-  bank_name: string;
-  bank_account: string;
-  sender_name: string;
-  transfer_receipt_url: string;
-  crypto_network: string;
-  crypto_wallet_address: string;
-  crypto_tx_hash: string;
-  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
-  rejection_reason: string;
-  admin_notes: string;
+  method: 'bank' | 'crypto' | 'gift_code';
+  bank_id: string | null;
+  receipt_url: string | null;
+  sender_name: string | null;
+  sender_account: string | null;
+  crypto_network: string | null;
+  crypto_txhash: string | null;
+  crypto_from_address: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'processing' | 'completed';
   reviewed_by: string | null;
+  reject_reason: string | null;
   reviewed_at: string | null;
   transaction_id: string | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -157,20 +161,25 @@ export interface DbWithdrawRequest {
   user_id: string;
   amount: number;
   currency: 'YER' | 'SAR' | 'USD';
-  method: 'bank_transfer' | 'crypto' | 'cash' | 'agent';
-  bank_name: string;
-  bank_account: string;
-  bank_iban: string;
-  crypto_network: string;
-  crypto_wallet_address: string;
-  status: 'pending' | 'approved' | 'processing' | 'completed' | 'rejected' | 'cancelled';
-  rejection_reason: string;
-  admin_notes: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
+  fee_amount: number;
+  net_amount: number;
+  method: 'bank' | 'cash' | 'crypto';
+  bank_id: string | null;
+  account_name: string | null;
+  account_number: string | null;
+  iban: string | null;
+  crypto_network: string | null;
+  crypto_address: string | null;
+  cash_location: string | null;
+  cash_contact: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'processing' | 'completed';
   processed_by: string | null;
+  reject_reason: string | null;
   processed_at: string | null;
   transaction_id: string | null;
+  payout_ref: string | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -623,8 +632,12 @@ export const supabaseService = {
     return data as DbOrder[];
   },
 
-  async createOrder(order: Omit<DbOrder, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase.from('orders').insert(order).select().single();
+  async createOrder(order: Partial<DbOrder> & { user_id: string; product_code: string; product_name: string; amount: number; currency: string }) {
+    const { data, error } = await supabase.from('orders').insert({
+      ...order,
+      status: order.status || 'pending',
+      execution_type: order.execution_type || 'auto',
+    }).select().single();
     if (error) throw error;
     return data as DbOrder;
   },
