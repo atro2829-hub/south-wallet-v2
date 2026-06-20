@@ -592,14 +592,9 @@ export default function AuthScreen() {
       const newUserId = await generateUniqueUserId(database);
 
       // Step 1: Create the Supabase auth user AND the public.users row in one call.
-      // The card_number will be set to newUserId (6-digit account number).
+      // New schema: only display_name + phone + role (no first_name/second_name/etc.)
       const { user, error } = await createUserWithEmailAndPassword(auth, regEmail, regPassword, {
-        firstName: regFirstName.trim(),
-        secondName: regSecondName.trim(),
-        thirdName: regThirdName.trim(),
-        familyName: regFamilyName.trim(),
         phone: regPhone ? `+967${regPhone}` : '',
-        nationalId: regNationalId.trim(),
         displayName: fullName,
         role: isAdminEmail ? 'admin' : 'user',
       });

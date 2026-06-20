@@ -36,14 +36,9 @@ export async function signUp(
   email: string,
   password: string,
   metadata: {
-    firstName?: string;
-    secondName?: string;
-    thirdName?: string;
-    familyName?: string;
     phone?: string;
-    nationalId?: string;
-    role?: 'user' | 'admin' | 'owner';
     displayName?: string;
+    role?: 'user' | 'admin' | 'support';
   } = {}
 ): Promise<{ user: AuthUser | null; error: { code?: string; message: string } | null }> {
   try {
@@ -52,12 +47,7 @@ export async function signUp(
       password,
       options: {
         data: {
-          first_name: metadata.firstName || '',
-          second_name: metadata.secondName || '',
-          third_name: metadata.thirdName || '',
-          family_name: metadata.familyName || '',
           phone: metadata.phone || '',
-          national_id: metadata.nationalId || '',
           display_name: metadata.displayName || '',
           role: metadata.role || 'user',
         },
@@ -72,27 +62,22 @@ export async function signUp(
       return { user: null, error: { message: 'لم يتم إنشاء المستخدم' } };
     }
 
-    // Insert the public.users row with a 6-digit card_number
-    const cardNumber = await supabaseService.generateUniqueCardNumber();
+    // Insert the public.users row — uses NEW schema column names
     const { error: profileError } = await supabase.from('users').insert({
       id: data.user.id,
-      firebase_uid: data.user.id, // For backward-compat with any code that reads firebase_uid
-      email,
+      firebase_uid: data.user.id,
       phone: metadata.phone || null,
-      first_name: metadata.firstName || '',
-      second_name: metadata.secondName || '',
-      third_name: metadata.thirdName || '',
-      family_name: metadata.familyName || '',
-      display_name: metadata.displayName || '',
-      national_id: metadata.nationalId || null,
-      card_number: cardNumber,
-      card_issued_at: new Date().toISOString(),
-      role: metadata.role || 'user',
-      kyc_status: 'pending',
+      display_name: metadata.displayName || metadata.phone || '',
+      email,
+      password_hash: 'supabase_auth_managed', // NOT NULL — Supabase Auth manages the real hash
+      role: (metadata.role as any) || 'user',
+      kyc_status: 'none', // new ENUM default
+      balance_yer: 0,
+      balance_sar: 0,
+      balance_usd: 0,
       is_active: true,
       is_blocked: false,
-      theme: 'light',
-      language: 'ar',
+      metadata: {},
     });
 
     if (profileError) {
