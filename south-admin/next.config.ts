@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   trailingSlash: true,
+  // Fix Turbopack multi-lockfile workspace root detection.
+  // Without this, Next.js picks the parent repo root (user app) instead of
+  // this south-admin directory, causing @/* import alias resolution to fail.
+  turbopack: {
+    root: __dirname,
+  },
 };
 
 export default nextConfig;
