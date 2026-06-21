@@ -58,6 +58,8 @@ import { supabase } from '@/lib/supabase';
 import { getCategories, type DynamicCategory } from '@/lib/categories';
 import { useAdminSettings } from '@/lib/use-admin-settings';
 import { useSupabaseSync } from '@/lib/use-supabase-sync';
+import { appIcons } from '@/lib/app-icons';
+import { STATIC_SECTIONS, type StaticSection } from '@/lib/static-sections';
 import {
   onForegroundNotification,
   handleNotificationTap,
@@ -182,11 +184,9 @@ const quickActions = [
   { id: 'deposit', label: 'إيداع', icon: HandCoins, color: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #D97706)' },
 ];
 
-// Fixed utility services that are app features, not from DB
-const utilityServices = [
-  { id: 'transfer', label: 'تحويل الأموال', iconKey: 'transfer', screenType: 'transfer' as const },
-  { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' as const },
-];
+// STATIC_SECTIONS and StaticSection are imported from @/lib/static-sections
+// Keep utilityServices for backward compat with code that references it
+const utilityServices = STATIC_SECTIONS.filter(s => s.isUtility);
 
 // NOTE: Static promo items removed — banners are now fully dynamic from the
 // Supabase banners table (managed by admin). No hardcoded promos in the UI.
@@ -642,9 +642,18 @@ export default function HomeScreen() {
       return;
     }
 
-    // Route based on screenType (derived from section type in DB)
+    // Route based on screenType
     const effectiveScreenType = screenType || 'manual';
     switch (effectiveScreenType) {
+      case 'wallet-transfer':
+        setTransferOpen(true);
+        break;
+      case 'deposit':
+        setActiveScreen('deposit');
+        break;
+      case 'support':
+        setActiveScreen('support');
+        break;
       case 'exchange':
         setActiveScreen('exchange');
         break;
@@ -655,11 +664,17 @@ export default function HomeScreen() {
         useAppStore.getState().setActiveScreen('investment');
         break;
       case 'usdt':
-        useAppStore.getState().setSelectedCategory(serviceId);
-        useAppStore.getState().setActiveScreen('category-detail');
+        setActiveScreen('deposit');
         break;
+      case 'games':
       case 'api-games':
         useAppStore.getState().setActiveScreen('games');
+        break;
+      case 'gift-cards':
+        useAppStore.getState().setActiveScreen('gift-cards');
+        break;
+      case 'favorites':
+        useAppStore.getState().setActiveScreen('favorites');
         break;
       case 'api-products':
       case 'telecom':
@@ -742,47 +757,23 @@ export default function HomeScreen() {
     return mapping[type] || 'manual';
   };
 
+  // ====================================================================
+  // BUILD SERVICES FROM STATIC SECTIONS — NOT from database.
+  // Uses custom app-icons (flat design, maroon + accent red).
+  // ====================================================================
   const dynamicServices = useMemo(() => {
-    // Build services ONLY from Supabase categories (synced via use-supabase-sync)
-    const categoryServices: DynamicService[] = categories
-      .filter(c => {
-        // Check visibility from fbVisibility (still used for admin visibility control)
-        const isVisible = (fbVisibility.sections || {})[c.id] !== false;
-        return isVisible;
-      })
-      .map(c => {
-        // Enrich with data from fbSections (full DbSection data)
-        const section = fbSections[c.id] as any;
-        const sectionIcon = section?.icon || c.icon || '';
-        const sectionColor = section?.color || '';
-        const sectionType = section?.type || c.type || '';
-        const sectionImageUrl = section?.image_url || '';
-        // firebaseIcon: if the icon is base64 or a data URL, treat it as firebaseIcon
-        const isFirebaseIcon = sectionIcon && (sectionIcon.startsWith('data:') || sectionIcon.startsWith('http'));
-
-        return {
-          id: c.id,
-          label: c.name,
-          iconKey: c.type || c.id,
-          color: sectionColor,
-          screenType: mapSectionTypeToScreenType(sectionType),
-          icon: sectionIcon,
-          iconType: getIconType(sectionIcon),
-          firebaseIcon: isFirebaseIcon ? sectionIcon : (sectionImageUrl || undefined),
-        };
-      });
-
-    // Add fixed utility services (transfer, recharge) that are NOT from DB
-    const utilityItems: DynamicService[] = utilityServices.map(s => ({
+    return STATIC_SECTIONS.map(s => ({
       id: s.id,
       label: s.label,
       iconKey: s.iconKey,
+      // Force maroon for ALL icons — unified visual identity
+      color: '#5C1A1B',
       screenType: s.screenType,
       iconType: 'image' as const,
+      // Use the custom app icon as firebaseIcon (renders as <img>)
+      firebaseIcon: appIcons[s.iconKey] || appIcons.recharge,
     }));
-
-    return [...categoryServices, ...utilityItems];
-  }, [categories, fbSections, fbVisibility]);
+  }, []);
 
   return (
     <div className="pb-4">
@@ -1286,8 +1277,11 @@ export default function HomeScreen() {
             // Icon resolution priority: firebaseIcon → lucide icon → custom SVG → fallback icon maps → colored square
             // NO emoji rendering - all icons use Lucide or custom SVGs with app theme colors
             const fallbackIconSrc = productIcons[service.iconKey] || serviceIcons[service.iconKey];
-            const sectionColor = service.color || '#5C1A1B';
-            const iconBgColor = sectionColor + '15'; // soft background matching icon color
+            // FIX: force maroon (#5C1A1B) for all section icons to unify
+            // the visual identity with the app's brand color, regardless of
+            // any custom color the admin set on the section row.
+            const sectionColor = '#5C1A1B';
+            const iconBgColor = sectionColor + '15'; // soft maroon background
             // Determine icon to render
             const hasFirebaseIcon = !!service.firebaseIcon;
             const iconIsLucide = service.iconType === 'lucide' && service.icon;
@@ -1316,28 +1310,26 @@ export default function HomeScreen() {
                 }}
               >
                 <div
-                  className="w-11 h-11 rounded-2xl overflow-hidden flex items-center justify-center"
-                  style={{ background: hasAnyIcon || shouldUseLucide ? 'transparent' : iconBgColor }}
+                  className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center"
+                  style={{
+                    // Jaib-style: white rounded square container for ALL icons
+                    background: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                    boxShadow: isDark ? 'none' : '0 2px 8px rgba(92,26,27,0.08)',
+                    border: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(92,26,27,0.06)',
+                  }}
                 >
                   {hasFirebaseIcon ? (
-                    <img src={service.firebaseIcon} alt={service.label} className="w-full h-full object-contain" />
+                    <img src={service.firebaseIcon} alt={service.label} className="w-8 h-8 object-contain" />
                   ) : iconIsImage ? (
-                    <img src={service.icon} alt={service.label} className="w-full h-full object-contain" />
+                    <img src={service.icon} alt={service.label} className="w-8 h-8 object-contain" />
                   ) : shouldUseLucide && !shouldUseCustomSvg ? (
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: iconBgColor }}>
-                      <LucideIconRenderer iconName={service.icon!} color={sectionColor} />
-                    </div>
+                    <LucideIconRenderer iconName={service.icon!} color={sectionColor} />
                   ) : shouldUseCustomSvg ? (
-                    // Emoji icon that doesn't match Lucide - use custom SVG fallback from service-icons
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: iconBgColor }}>
-                      <LucideIconRenderer iconName={service.iconKey || 'default'} color={sectionColor} />
-                    </div>
+                    <LucideIconRenderer iconName={service.iconKey || 'default'} color={sectionColor} />
                   ) : fallbackIconSrc ? (
-                    <img src={fallbackIconSrc} alt={service.label} className="w-full h-full object-contain" />
+                    <img src={fallbackIconSrc} alt={service.label} className="w-8 h-8 object-contain" />
                   ) : (
-                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: iconBgColor }}>
-                      <LayoutGrid size={22} strokeWidth={2} color={sectionColor} />
-                    </div>
+                    <LayoutGrid size={22} strokeWidth={2} color={sectionColor} />
                   )}
                 </div>
                 <span

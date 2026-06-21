@@ -17,6 +17,7 @@ import type {
 } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
 import type { ServiceProvider, ProductPackage, ServiceCategory } from '@/lib/store';
+import { buildFbSectionsFromStatic } from '@/lib/static-sections';
 
 // ─────────────────────────────────────────────────────────
 //  Type Mappers: Supabase DB → Zustand Store
@@ -25,66 +26,66 @@ import type { ServiceProvider, ProductPackage, ServiceCategory } from '@/lib/sto
 /** Map a Supabase DbUser row to the store's User shape.
  *  NOTE: store.user.id is the Firebase Auth UID, NOT the Supabase UUID. */
 function mapDbUserToStore(dbUser: DbUser, firebaseUid: string) {
-  const fullName =
-    [dbUser.first_name, dbUser.second_name, dbUser.third_name, dbUser.family_name]
-      .filter((n) => n && n.trim())
-      .join(' ') ||
-    dbUser.display_name ||
-    '';
-
+  // The new schema uses display_name (not first_name/second_name/etc.)
+  // and role is an ENUM ('user', 'admin', 'support')
+  // kyc_status is an ENUM ('none', 'pending', 'verified', 'rejected')
   return {
     id: firebaseUid, // store keeps Firebase UID as id
     email: dbUser.email || '',
     phone: dbUser.phone || '',
-    name: fullName,
-    firstName: dbUser.first_name || '',
-    secondName: dbUser.second_name || '',
-    thirdName: dbUser.third_name || '',
-    familyName: dbUser.family_name || '',
-    nationalId: dbUser.national_id || '',
+    name: dbUser.display_name || dbUser.phone || '',
+    firstName: dbUser.display_name || '',
+    secondName: '',
+    thirdName: '',
+    familyName: '',
+    nationalId: '',
     avatar: dbUser.avatar_url || '',
-    role: (dbUser.role === 'agent' ? 'user' : dbUser.role) as 'user' | 'admin' | 'owner',
+    role: (dbUser.role === 'admin' || dbUser.role === 'support' ? 'admin' : 'user') as 'user' | 'admin' | 'owner',
     userId: dbUser.id, // Supabase UUID stored here for reference
-    kycStatus: dbUser.kyc_status || 'pending',
+    displayId: dbUser.display_id || '', // 6-digit user-facing account number
+    kycStatus: (dbUser.kyc_status === 'none' ? 'pending' : dbUser.kyc_status) as 'pending' | 'submitted' | 'verified' | 'rejected',
     isBlocked: dbUser.is_blocked || false,
-    balanceYER: dbUser.balance_yer || 0,
-    balanceSAR: dbUser.balance_sar || 0,
-    balanceUSD: dbUser.balance_usd || 0,
-    cardType: dbUser.card_type || '',
-    cardNumber: dbUser.card_number || '',
-    cardIssuedAt: '', // not in Supabase schema
-    governorate: dbUser.governorate || '',
-    theme: (dbUser.theme === 'system' ? 'light' : dbUser.theme) as 'light' | 'dark',
+    balanceYER: Number(dbUser.balance_yer) || 0,
+    balanceSAR: Number(dbUser.balance_sar) || 0,
+    balanceUSD: Number(dbUser.balance_usd) || 0,
+    cardType: '',
+    cardNumber: '',
+    cardIssuedAt: '',
+    governorate: '',
+    theme: 'light' as 'light' | 'dark',
   };
 }
 
 /** Map a Supabase DbTransaction row to the store's Transaction shape. */
-function mapDbTransactionToStore(dbTx: DbTransaction) {
+function mapDbTransactionToStore(dbTx: any) {
   return {
     id: dbTx.id,
     fromUserId: dbTx.from_user_id || '',
     toUserId: dbTx.to_user_id || '',
-    amount: dbTx.amount || 0,
+    amount: Number(dbTx.amount) || 0,
     currency: dbTx.currency || 'YER',
     type: dbTx.type || 'order',
-    status: dbTx.status || 'completed',
+    status: dbTx.status === 'reversed' ? 'refunded' : (dbTx.status || 'completed'),
     description: dbTx.description || '',
     createdAt: dbTx.created_at || new Date().toISOString(),
   };
 }
 
 /** Map a Supabase DbNotification row to the store's Notification shape. */
-function mapDbNotificationToStore(dbNotif: DbNotification) {
+function mapDbNotificationToStore(dbNotif: any) {
+  // New schema: entity_type, entity_id, action_url, metadata
+  // Old schema: navigation_target, navigation_params, data
+  const meta = dbNotif.metadata || {};
   return {
     id: dbNotif.id,
     title: dbNotif.title || '',
     body: dbNotif.body || '',
-    type: (dbNotif.type || 'info') as 'info' | 'transaction' | 'security' | 'promo',
+    type: (dbNotif.type || 'system') as 'info' | 'transaction' | 'security' | 'promo',
     isRead: dbNotif.is_read || false,
     createdAt: dbNotif.created_at || new Date().toISOString(),
-    navigationTarget: dbNotif.navigation_target || undefined,
-    navigationParams: dbNotif.navigation_params || undefined,
-    data: dbNotif.data || undefined,
+    navigationTarget: dbNotif.action_url || meta.navigation_target || undefined,
+    navigationParams: meta.navigation_params || undefined,
+    data: meta || undefined,
   };
 }
 
@@ -424,18 +425,72 @@ export function useSupabaseSync() {
   //  Global data fetch (not user-specific)
   // ─────────────────────────────────────────────────────────
 
+  // FAST BOOT: Try to load the build-time JSON snapshot first.
+  // This lets the app render the structure (sections, providers, banners,
+  // investment plans, etc.) instantly without waiting for a Supabase
+  // round-trip. The full fetchGlobalData() still runs in the background
+  // to reconcile with the latest DB state (and Realtime subscriptions
+  // push admin changes immediately afterwards).
+  const loadBootSnapshot = useCallback(async () => {
+    try {
+      // In Capacitor, the file is served from capacitor://localhost/data/sections.json
+      // In dev, it's at /data/sections.json (relative to /public)
+      // If the prebuild script didn't run, the file is missing — fail silently.
+      const res = await fetch('/data/sections.json', { cache: 'force-cache' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data;
+    } catch {
+      // Network error or file missing — fall back to live fetch
+      return null;
+    }
+  }, []);
+
+  // Apply the boot snapshot immediately (synchronously if possible) so the
+  // first paint shows the structure. Then fetchGlobalData() reconciles.
+  // NOTE: sections are NOT loaded from snapshot — they are STATIC in code.
+  const applyBootSnapshot = useCallback((snapshot: any) => {
+    if (!snapshot) return;
+    try {
+      // Sections: SKIP — home-screen uses STATIC_SECTIONS hardcoded in code
+      // if (snapshot.sections ...) → REMOVED
+      if (snapshot.service_providers && Array.isArray(snapshot.service_providers)) {
+        const providers = snapshot.service_providers.map(mapDbProviderToStore);
+        setProvidersRef.current(providers);
+      }
+      // banners, investment_plans, escrow_categories, usdt_categories are
+      // fetched on demand by their respective screens, so we don't need to
+      // pre-populate them here.
+      console.log('[SupabaseSync] Boot snapshot applied:',
+        snapshot._meta?.counts || 'no counts');
+    } catch (e) {
+      console.warn('[SupabaseSync] Boot snapshot apply failed:', e);
+    }
+  }, []);
+
   const fetchGlobalData = useCallback(async () => {
+    // 1. Try boot snapshot (instant)
+    const snapshot = await loadBootSnapshot();
+    if (snapshot) applyBootSnapshot(snapshot);
+
+    // 2. Then fetch live data (reconcile)
     try {
       // Fetch all global data in parallel for speed
+      // ====================================================================
+      // SECTIONS ARE NOW STATIC — hardcoded in home-screen.tsx (STATIC_SECTIONS).
+      // We DO NOT fetch sections from DB anymore. The admin controls content
+      // (providers, games, packages) via DB, but the section grid structure
+      // is fixed at build time.
+      // We still fetch: service_providers, exchange_rates, feature_flags,
+      // kill_switch, maintenance.
+      // ====================================================================
       const [
-        sectionsResult,
         providersResult,
         exchangeRatesResult,
         featureFlagsResult,
         killSwitchResult,
         maintenanceResult,
       ] = await Promise.allSettled([
-        supabaseService.getSections(),
         supabaseService.getServiceProviders(),
         supabaseService.getExchangeRates(),
         supabaseService.getFeatureFlags(),
@@ -443,19 +498,12 @@ export function useSupabaseSync() {
         supabaseService.getMaintenance(),
       ]);
 
-      // Sections → categories + fbSections
-      if (sectionsResult.status === 'fulfilled' && sectionsResult.value) {
-        const sections = sectionsResult.value;
-        const categories = sections.filter((s) => s.is_visible).map(mapDbSectionToCategory);
-        setCategoriesRef.current(categories);
-
-        // Also set raw fbSections for components that still use the old shape
-        const sectionsMap: Record<string, DbSection> = {};
-        for (const s of sections) {
-          sectionsMap[s.id] = s;
-        }
-        setFbSectionsRef.current(sectionsMap as Record<string, any>);
-      }
+      // Sections: populate store from STATIC_SECTIONS since the `sections` table
+      // was dropped in migration 033. This ensures services-screen renders
+      // all sections (games section will show its 200 DB providers).
+      // categories stays empty (unused by current UI).
+      setCategoriesRef.current([]);
+      setFbSectionsRef.current(buildFbSectionsFromStatic());
 
       // Providers
       if (providersResult.status === 'fulfilled' && providersResult.value) {
