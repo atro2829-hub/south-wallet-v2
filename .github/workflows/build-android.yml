@@ -64,11 +64,6 @@ jobs:
           sdkmanager --install "platform-tools" || true
 
       - name: Install npm dependencies
-        # Use npm ci for a deterministic install from package-lock.json —
-        # this is much faster and more reliable than `npm install` which can
-        # hang for 20+ minutes re-resolving the dependency tree.
-        # --legacy-peer-deps is required because some React 19 + Capacitor 8
-        # peer deps conflict.
         run: npm ci --legacy-peer-deps --no-audit --no-fund
         timeout-minutes: 10
 
@@ -91,6 +86,21 @@ jobs:
           NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      - name: "🎨 Install @capacitor/assets & generate icons"
+        run: |
+          npm install -g @capacitor/assets@latest
+          if [ -f "resources/icon.png" ]; then
+            npx @capacitor/assets generate \
+              --iconBackgroundColor '#5C1A1B' \
+              --iconBackgroundColorDark '#1A0A0E' \
+              --splashBackgroundColor '#1A0A0E' \
+              --splashBackgroundColorDark '#1A0A0E' \
+              --android
+            echo "✅ Launcher icons generated from resources/icon.png"
+          else
+            echo "⚠️ No resources/icon.png found — skipping icon generation"
+          fi
 
       - name: Create keystore from secret
         run: |
@@ -157,9 +167,11 @@ jobs:
 
       - name: Install npm dependencies
         working-directory: south-admin
-        # npm ci = deterministic install from package-lock.json (faster than npm install).
         run: npm ci --legacy-peer-deps --no-audit --no-fund
         timeout-minutes: 10
+
+      - name: Remove API routes (static export incompatible)
+        run: rm -rf south-admin/src/app/api || true
 
       - name: Build Next.js static export
         working-directory: south-admin
@@ -169,6 +181,23 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: "🎨 Install @capacitor/assets & generate admin icons"
+        run: |
+          npm install -g @capacitor/assets@latest
+          if [ -f "south-admin/resources/icon.png" ]; then
+            cd south-admin
+            npx @capacitor/assets generate \
+              --iconBackgroundColor '#5C1A1B' \
+              --iconBackgroundColorDark '#1A0A0E' \
+              --splashBackgroundColor '#1A0A0E' \
+              --splashBackgroundColorDark '#1A0A0E' \
+              --android
+            echo "✅ Admin launcher icons generated"
+          else
+            echo "⚠️ No south-admin/resources/icon.png found — skipping"
+          fi
 
       - name: Create keystore from secret
         run: |

@@ -23,165 +23,130 @@ on:
         options: [release, debug]
 
 env:
-  APP_ID: com.qtbm.south
-  APP_NAME: "محفظة الجنوب"
-  JAVA_VERSION: "17"
-  NODE_VERSION: "20"
-  WORKING_DIR: "."
+  JAVA_VERSION: "21"
+  ANDROID_COMPILE_SDK: "36"
+  ANDROID_BUILD_TOOLS: "36.0.0"
 
 jobs:
-  # ─────────────────────────────────────────
   build:
-    name: "🔨 Build & Sign APK"
+    name: "🔨 Build & Sign User APK"
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
-    defaults:
-      run:
-        working-directory: ./south-wallet-v2
-
     steps:
-      # 1 — Checkout
       - name: "📥 Checkout repository"
         uses: actions/checkout@v4
 
-      # 2 — Node.js setup
-      - name: "⚙️ Setup Node.js ${{ env.NODE_VERSION }}"
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: "south-wallet-v2/package-lock.json"
+      - name: "⚙️ Install Node.js 22"
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          node --version && npm --version
 
-      # 3 — Java (Android SDK needs it)
       - name: "☕ Setup Java ${{ env.JAVA_VERSION }}"
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: ${{ env.JAVA_VERSION }}
 
-      # 4 — Android SDK
       - name: "🤖 Setup Android SDK"
         uses: android-actions/setup-android@v3
 
-      # 5 — Install Node dependencies
-      - name: "📦 Install dependencies"
-        run: npm ci --legacy-peer-deps
+      - name: "✅ Accept SDK licenses"
+        run: yes | sdkmanager --licenses 2>/dev/null || true
 
-      # 6 — Set env variables for build
-      - name: "🔑 Write .env.local"
+      - name: "🔧 Install SDK components"
         run: |
-          cat > .env.local << EOF
-          NEXT_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          NEXT_PUBLIC_APP_ENV=production
-          EOF
+          sdkmanager --install "platforms;android-${{ env.ANDROID_COMPILE_SDK }}" "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" || true
+          sdkmanager --install "platform-tools" || true
 
-      # 7 — Next.js static export
-      - name: "🏗️ Build Next.js (static export)"
+      - name: "📦 Install npm dependencies"
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+        timeout-minutes: 10
+
+      - name: "🗑️ Remove API routes (static export incompatible)"
+        run: rm -rf src/app/api || true
+
+      - name: "🏗️ Build Next.js static export"
         run: npm run build
         env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          NODE_OPTIONS: --max-old-space-size=4096
+          NEXT_TELEMETRY_DISABLED: 1
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_G2BULK_API_KEY: ${{ secrets.NEXT_PUBLIC_G2BULK_API_KEY }}
+          NEXT_PUBLIC_G2BULK_BASE_URL: ${{ secrets.NEXT_PUBLIC_G2BULK_BASE_URL }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: ${{ secrets.NEXT_PUBLIC_FIREBASE_DATABASE_URL }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
-      # 8 — Install Capacitor CLI globally
-      - name: "⚡ Install Capacitor CLI"
-        run: npm install -g @capacitor/cli@latest
-
-      # 9 — Add Android platform (idempotent)
-      - name: "🤖 Add Android platform"
-        run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          else
-            echo "Android platform already exists, skipping add"
-          fi
-
-      # 10 — Install @capacitor/assets for icon generation
-      - name: "🖼️ Install Capacitor Assets tool"
+      - name: "🖼️ Install @capacitor/assets"
         run: npm install -g @capacitor/assets@latest
 
-      # 11 — Generate Android icon assets from resources/icon.png
-      - name: "🎨 Generate launcher icons & splash screens"
+      - name: "🎨 Generate all launcher icon densities from resources/icon.png"
         run: |
-          npx @capacitor/assets generate \
-            --iconBackgroundColor '#5C1A1B' \
-            --iconBackgroundColorDark '#1A0A0E' \
-            --splashBackgroundColor '#1A0A0E' \
-            --splashBackgroundColorDark '#1A0A0E' \
-            --android
-
-      # 12 — Sync web assets + plugins to Android
-      - name: "🔄 Capacitor sync"
-        run: npx cap sync android
-
-      # 13 — Make Gradle wrapper executable
-      - name: "🔧 Fix Gradle permissions"
-        run: chmod +x android/gradlew
-
-      # 14 — Decode keystore from secret
-      - name: "🔐 Decode release keystore"
-        run: |
-          mkdir -p android/app/keystore
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore/release.jks
-        continue-on-error: true  # Will build debug if keystore not set
-
-      # 15 — Build APK
-      - name: "🏗️ Build Release APK"
-        working-directory: south-wallet-v2/android
-        run: |
-          if [ -f "app/keystore/release.jks" ]; then
-            echo "Building SIGNED release APK…"
-            ./gradlew assembleRelease \
-              -Pandroid.injected.signing.store.file=keystore/release.jks \
-              -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" \
-              -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" \
-              -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}"
+          if [ -f "resources/icon.png" ]; then
+            npx @capacitor/assets generate \
+              --iconBackgroundColor '#5C1A1B' \
+              --iconBackgroundColorDark '#1A0A0E' \
+              --splashBackgroundColor '#1A0A0E' \
+              --splashBackgroundColorDark '#1A0A0E' \
+              --android
+            echo "✅ Icon assets generated"
           else
-            echo "⚠️ Keystore not set — building DEBUG APK"
-            ./gradlew assembleDebug
+            echo "⚠️ resources/icon.png not found — using existing icons"
           fi
 
-      # 16 — Find & rename APK
-      - name: "📦 Locate built APK"
-        id: apk
-        working-directory: south-wallet-v2
-        run: |
-          APK=$(find android -name "*.apk" | head -1)
-          echo "path=$APK" >> $GITHUB_OUTPUT
-          echo "Found: $APK"
+      - name: "🔄 Capacitor sync android"
+        run: npx cap sync android
 
-      # 17 — Upload APK artifact
-      - name: "⬆️ Upload APK artifact"
+      - name: "🔐 Decode keystore"
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > south-wallet.keystore
+        continue-on-error: true
+
+      - name: "🏗️ Build APK"
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          if [ -f "../south-wallet.keystore" ]; then
+            echo "→ Building SIGNED release APK"
+            ./gradlew assembleRelease \
+              -PMYAPP_UPLOAD_STORE_FILE=../../south-wallet.keystore \
+              -PMYAPP_UPLOAD_STORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}" \
+              -PMYAPP_UPLOAD_KEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
+              -PMYAPP_UPLOAD_KEY_PASSWORD="${{ secrets.KEY_PASSWORD }}" \
+              --stacktrace
+          else
+            echo "⚠️ Keystore not found — building debug APK"
+            ./gradlew assembleDebug --stacktrace
+          fi
+
+      - name: "⬆️ Upload APK"
         uses: actions/upload-artifact@v4
         with:
           name: "south-wallet-user-${{ github.run_number }}"
-          path: "south-wallet-v2/${{ steps.apk.outputs.path }}"
+          path: |
+            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+          if-no-files-found: warn
 
-      # 18 — Comment on PR with download link
-      - name: "💬 Comment APK link on PR"
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## 📱 محفظة الجنوب — Build #${{ github.run_number }}\n\n✅ APK جاهز للتحميل من تبويب **Actions → Artifacts**\n\n- App ID: \`com.qtbm.south\`\n- Commit: \`${{ github.sha }}\``
-            });
-
-  # ─────────────────────────────────────────
   notify:
     name: "📣 Build Status"
     needs: build
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: "✅ Build succeeded"
-        if: needs.build.result == 'success'
-        run: echo "✅ User app build succeeded — APK uploaded"
-      - name: "❌ Build failed"
-        if: needs.build.result == 'failure'
-        run: echo "❌ User app build FAILED — check logs above" && exit 1
+      - name: "Result"
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "✅ User app build SUCCEEDED — APK ready in Artifacts tab"
+          else
+            echo "❌ User app build FAILED"
+            exit 1
+          fi
