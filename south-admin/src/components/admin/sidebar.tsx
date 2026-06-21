@@ -96,6 +96,7 @@ const navItems: NavItem[] = [
   { id: 'g2bulk', label: 'G2Bulk', icon: Globe, roles: ['owner'] },
   { id: 'sections', label: 'إدارة الأقسام', icon: Layers, roles: ['owner'] },
   { id: 'categories', label: 'الأقسام والمطابقة', icon: FolderOpen, roles: ['admin', 'owner'] },
+  { id: 'organized-categories', label: 'الأقسام المنظّمة', icon: Layers, roles: ['admin', 'owner'] },
   { id: 'visibility', label: 'إعدادات الظهور', icon: Eye, roles: ['owner'] },
   { id: 'activity-log', label: 'سجل النشاط', icon: Activity, roles: ['owner'] },
   { id: 'backup', label: 'النسخ الاحتياطي', icon: Database, roles: ['owner'] },

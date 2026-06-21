@@ -43,6 +43,7 @@ import UsdtPanel from '@/components/admin/usdt-panel';
 import MaintenancePanel from '@/components/admin/maintenance-panel';
 import CategoriesPanel from '@/components/admin/categories-panel';
 import DepartmentsPanel from '@/components/admin/departments-panel';
+import OrganizedCategoriesPanel from '@/components/admin/organized-categories-panel';
 import { Menu, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
@@ -87,6 +88,7 @@ const panelMap: Record<string, React.ComponentType> = {
   maintenance: MaintenancePanel,
   categories: CategoriesPanel,
   departments: DepartmentsPanel,
+  'organized-categories': OrganizedCategoriesPanel,
 };
 
 export default function AdminApp() {

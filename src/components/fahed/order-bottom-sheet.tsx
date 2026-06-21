@@ -56,6 +56,9 @@ export default function OrderBottomSheet() {
   const [promoApplied, setPromoApplied] = useState(false);
   const [promoDiscount, setPromoDiscount] = useState(0);
 
+  // G2Bulk / API purchase verification step
+  const [showPurchaseConfirm, setShowPurchaseConfirm] = useState(false);
+
   // Quick recharge - find last order with this provider
   const lastOrder = orders.find((o) => o.providerId === selectedProvider?.id);
 
@@ -123,64 +126,43 @@ export default function OrderBottomSheet() {
   // ─── API Auto-Processing ──────────────────────────────────────────
   // When a package has executionType='auto' and an apiProvider configured,
   // this function will call the external API and handle the result.
+  // FIX: reads providers from Supabase (api_providers table) instead of the
+  // legacy unmapped Firebase path 'adminSettings/apiProviders'.
   const processApiOrder = async (
     orderId: string,
     pkg: ProductPackage,
     orderCustomerInput: string
   ): Promise<{ success: boolean; message: string }> => {
     try {
-      // Find the API provider config from Firebase
-      const apiProvidersRef = ref(database, 'adminSettings/apiProviders');
-      const snapshot = await get(apiProvidersRef);
-      
-      if (!snapshot.exists()) {
+      // Fetch API providers from Supabase (replaces broken Firebase read)
+      const { getApiProviders, purchaseProduct } = await import('@/lib/api-providers');
+      const providers = await getApiProviders();
+
+      if (!providers || providers.length === 0) {
         return { success: false, message: 'لا يوجد مزود API مُكوّن' };
       }
-      
-      const providersData = snapshot.val();
-      let matchedProvider: ApiProviderConfig | null = null;
-      
+
       // Find the provider that matches the package's apiProvider field
-      for (const [, provider] of Object.entries(providersData)) {
-        const p = provider as any;
-        if (p.isActive && (
+      const matchedProvider = providers.find(p =>
+        p.enabled && (
           p.id === pkg.apiProvider ||
           p.name === pkg.apiProvider ||
-          // Also match if the provider's sectionId matches the package's providerId category
-          (p.sectionId && pkg.providerId && pkg.providerId.startsWith(`api-${p.sectionId}`))
-        )) {
-          matchedProvider = {
-            id: p.id || '',
-            name: p.name || '',
-            baseUrl: p.baseUrl || '',
-            apiKey: p.apiKey || '',
-            apiSecret: p.apiSecret || '',
-            method: p.method || 'POST',
-            headers: p.headers || {},
-            bodyTemplate: p.bodyTemplate || '',
-            responseFormat: p.responseFormat || 'json',
-            fieldMappings: p.fieldMappings || undefined,
-            isActive: p.isActive !== false,
-            createdAt: p.createdAt || '',
-          };
-          break;
-        }
-      }
-      
+          p.nameAr === pkg.apiProvider
+        )
+      ) || providers.find(p => p.enabled && p.type === 'g2bulk');
+
       if (!matchedProvider) {
         return { success: false, message: 'لم يتم العثور على مزود API مطابق' };
       }
-      
-      // Execute the order via API
-      const apiResult = await executeApiOrder(matchedProvider, {
-        customerId: orderCustomerInput,
-        packageId: pkg.productIdInApi || pkg.id,
-        amount: effectivePrice,
-        currency: pkg.currency,
-        phone: orderCustomerInput,
-        playerName: orderCustomerInput,
-      });
-      
+
+      // Execute the order via the modern api-providers module
+      const apiResult = await purchaseProduct(
+        matchedProvider,
+        Number(pkg.apiProductId || pkg.productIdInApi || pkg.id),
+        1,
+        orderCustomerInput,
+      );
+
       return {
         success: apiResult.success,
         message: apiResult.message || (apiResult.success ? 'تم تنفيذ الطلب بنجاح' : 'فشل تنفيذ الطلب'),
@@ -908,9 +890,12 @@ export default function OrderBottomSheet() {
                       </motion.p>
                     )}
 
-                    {/* Confirm Button */}
+                    {/* Confirm Button — opens verification dialog */}
                     <button
-                      onClick={handleConfirm}
+                      onClick={() => {
+                        if (!selectedPackageId || !customerInput.trim()) return;
+                        setShowPurchaseConfirm(true);
+                      }}
                       disabled={isProcessing || !selectedPackageId || !customerInput.trim()}
                       className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-bold text-white text-sm transition-all active:scale-[0.98] disabled:opacity-40"
                       style={{
@@ -922,7 +907,7 @@ export default function OrderBottomSheet() {
                         <Loader2 size={20} className="animate-spin" />
                       ) : (
                         <>
-                          <span>تأكيد الشراء</span>
+                          <span>مراجعة الطلب</span>
                           {selectedPackage && (
                             <span className="opacity-70">
                               ({effectivePrice.toLocaleString()} {currencySymbols[selectedPackage.currency]})
@@ -938,6 +923,158 @@ export default function OrderBottomSheet() {
           </motion.div>
         </>
       )}
+
+      {/* ── Purchase Verification Dialog (G2Bulk / API confirmation) ── */}
+      <AnimatePresence>
+        {showPurchaseConfirm && selectedPackage && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowPurchaseConfirm(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.85, y: 30 }}
+              transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+              className="fixed inset-x-4 bottom-6 z-[201] rounded-3xl overflow-hidden shadow-2xl"
+              style={{ background: isDark ? '#1A1A2E' : '#FFFFFF', maxWidth: 440, margin: '0 auto' }}
+            >
+              {/* Header */}
+              <div className="px-5 pt-5 pb-4" style={{ background: `linear-gradient(135deg, ${selectedProvider.color}18 0%, transparent 100%)` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+                      style={{ background: selectedProvider.color + '20' }}>
+                      <Receipt size={16} style={{ color: selectedProvider.color }} />
+                    </div>
+                    <span className="font-bold text-sm" style={{ color: isDark ? '#fff' : '#1a1a1a' }}>
+                      تأكيد الطلب
+                    </span>
+                  </div>
+                  {selectedPackage.executionType === 'auto' && selectedPackage.apiProvider && (
+                    <span className="text-xs px-2.5 py-1 rounded-full font-semibold"
+                      style={{ background: '#10B98120', color: '#10B981' }}>
+                      ⚡ تنفيذ فوري
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs mt-1" style={{ color: isDark ? '#aaa' : '#888' }}>
+                  يرجى مراجعة تفاصيل طلبك قبل التأكيد النهائي
+                </p>
+              </div>
+
+              {/* Order Details */}
+              <div className="px-5 pb-4 space-y-3">
+                {/* Provider + Package */}
+                <div className="rounded-2xl p-4 space-y-2.5"
+                  style={{ background: isDark ? '#ffffff08' : '#f8f8f8' }}>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs" style={{ color: isDark ? '#aaa' : '#888' }}>الخدمة</span>
+                    <span className="text-sm font-semibold" style={{ color: isDark ? '#fff' : '#1a1a1a' }}>
+                      {selectedProvider.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs" style={{ color: isDark ? '#aaa' : '#888' }}>الباقة</span>
+                    <span className="text-sm font-semibold" style={{ color: isDark ? '#fff' : '#1a1a1a' }}>
+                      {selectedPackage.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs" style={{ color: isDark ? '#aaa' : '#888' }}>
+                      {selectedProvider.customerInputLabel || 'معرّف الحساب'}
+                    </span>
+                    <span className="text-sm font-bold font-mono" style={{ color: selectedProvider.color }}>
+                      {customerInput}
+                    </span>
+                  </div>
+                  <div className="h-px" style={{ background: isDark ? '#ffffff10' : '#e5e5e5' }} />
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs" style={{ color: isDark ? '#aaa' : '#888' }}>المبلغ</span>
+                    <span className="text-base font-bold" style={{ color: selectedProvider.color }}>
+                      {effectivePrice.toLocaleString()} {currencySymbols[selectedPackage.currency]}
+                    </span>
+                  </div>
+                  {promoApplied && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-green-500">خصم كود الترويج</span>
+                      <span className="text-sm font-semibold text-green-500">
+                        -{promoDiscount.toLocaleString()} {currencySymbols[selectedPackage.currency]}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs" style={{ color: isDark ? '#aaa' : '#888' }}>الرصيد المتبقي بعد الشراء</span>
+                    <span className="text-sm font-bold"
+                      style={{ color: (getBalance(selectedPackage.currency) - effectivePrice) >= 0 ? '#10B981' : '#EF4444' }}>
+                      {Math.max(0, getBalance(selectedPackage.currency) - effectivePrice).toLocaleString()} {currencySymbols[selectedPackage.currency]}
+                    </span>
+                  </div>
+                </div>
+
+                {/* API auto-execution notice */}
+                {selectedPackage.executionType === 'auto' && selectedPackage.apiProvider && (
+                  <div className="flex items-start gap-2.5 p-3 rounded-2xl"
+                    style={{ background: '#10B98112', border: '1px solid #10B98130' }}>
+                    <CheckCircle2 size={15} className="mt-0.5 shrink-0" style={{ color: '#10B981' }} />
+                    <p className="text-xs leading-relaxed" style={{ color: '#10B981' }}>
+                      سيتم تنفيذ هذا الطلب تلقائياً عبر مزود API. تأكد من صحة معرّف الحساب قبل الإكمال.
+                    </p>
+                  </div>
+                )}
+
+                {/* Warning if balance is tight */}
+                {getBalance(selectedPackage.currency) - effectivePrice < 0 && (
+                  <div className="flex items-start gap-2.5 p-3 rounded-2xl"
+                    style={{ background: '#EF444412', border: '1px solid #EF444430' }}>
+                    <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: '#EF4444' }} />
+                    <p className="text-xs leading-relaxed" style={{ color: '#EF4444' }}>
+                      رصيدك غير كافٍ لإتمام هذه العملية. يرجى شحن رصيدك أولاً.
+                    </p>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex gap-3 pt-1">
+                  <button
+                    onClick={() => setShowPurchaseConfirm(false)}
+                    className="flex-1 py-3.5 rounded-2xl text-sm font-semibold border transition-colors"
+                    style={{
+                      borderColor: isDark ? '#ffffff20' : '#e5e5e5',
+                      color: isDark ? '#aaa' : '#666',
+                      background: isDark ? '#ffffff08' : '#f5f5f5',
+                    }}
+                  >
+                    تعديل
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowPurchaseConfirm(false);
+                      await handleConfirm();
+                    }}
+                    disabled={isProcessing || (getBalance(selectedPackage.currency) - effectivePrice) < 0}
+                    className="flex-[2] py-3.5 rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.97] disabled:opacity-40"
+                    style={{
+                      background: `linear-gradient(135deg, ${selectedProvider.color} 0%, ${selectedProvider.color}CC 100%)`,
+                      boxShadow: `0 4px 16px ${selectedProvider.color}40`,
+                    }}
+                  >
+                    {isProcessing ? (
+                      <Loader2 size={18} className="animate-spin mx-auto" />
+                    ) : (
+                      '✓ تأكيد الشراء نهائياً'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </AnimatePresence>
   );
 }
