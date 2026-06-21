@@ -1,0 +1,156 @@
+name: "🛡️ محفظة الجنوب — Admin App (Android)"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "south-admin/src/**"
+      - "south-admin/public/**"
+      - "south-admin/resources/**"
+      - "south-admin/capacitor.config.ts"
+      - "south-admin/next.config.ts"
+      - "south-admin/package.json"
+      - ".github/workflows/build-admin-app.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        required: true
+        default: "release"
+        type: choice
+        options: [release, debug]
+
+env:
+  APP_ID: com.qtbm.south.admin
+  APP_NAME: "محفظة الجنوب - الإدارة"
+  JAVA_VERSION: "17"
+  NODE_VERSION: "20"
+
+jobs:
+  build:
+    name: "🔨 Build & Sign Admin APK"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        working-directory: ./south-wallet-v2/south-admin
+
+    steps:
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
+
+      - name: "⚙️ Setup Node.js ${{ env.NODE_VERSION }}"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: "south-wallet-v2/south-admin/package-lock.json"
+
+      - name: "☕ Setup Java ${{ env.JAVA_VERSION }}"
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: "🤖 Setup Android SDK"
+        uses: android-actions/setup-android@v3
+
+      - name: "📦 Install dependencies"
+        run: npm ci --legacy-peer-deps
+
+      - name: "🔑 Write .env.local"
+        run: |
+          cat > .env.local << EOF
+          NEXT_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_APP_ENV=production
+          EOF
+
+      - name: "🏗️ Build Next.js (static export)"
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: "⚡ Install Capacitor CLI"
+        run: npm install -g @capacitor/cli@latest
+
+      - name: "🤖 Add Android platform"
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          else
+            echo "Android platform already exists"
+          fi
+
+      - name: "🖼️ Install Capacitor Assets tool"
+        run: npm install -g @capacitor/assets@latest
+
+      - name: "🎨 Generate launcher icons & splash screens"
+        run: |
+          npx @capacitor/assets generate \
+            --iconBackgroundColor '#5C1A1B' \
+            --iconBackgroundColorDark '#1A0A0E' \
+            --splashBackgroundColor '#1A0A0E' \
+            --splashBackgroundColorDark '#1A0A0E' \
+            --android
+
+      - name: "🔄 Capacitor sync"
+        run: npx cap sync android
+
+      - name: "🔧 Fix Gradle permissions"
+        run: chmod +x android/gradlew
+
+      - name: "🔐 Decode release keystore"
+        run: |
+          mkdir -p android/app/keystore
+          echo "${{ secrets.ADMIN_KEYSTORE_BASE64 }}" | base64 --decode > android/app/keystore/release.jks
+        continue-on-error: true
+
+      - name: "🏗️ Build Release APK"
+        working-directory: south-wallet-v2/south-admin/android
+        run: |
+          if [ -f "app/keystore/release.jks" ]; then
+            echo "Building SIGNED release APK…"
+            ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file=keystore/release.jks \
+              -Pandroid.injected.signing.store.password="${{ secrets.ADMIN_KEYSTORE_PASSWORD }}" \
+              -Pandroid.injected.signing.key.alias="${{ secrets.ADMIN_KEY_ALIAS }}" \
+              -Pandroid.injected.signing.key.password="${{ secrets.ADMIN_KEY_PASSWORD }}"
+          else
+            echo "⚠️ Keystore not set — building DEBUG APK"
+            ./gradlew assembleDebug
+          fi
+
+      - name: "📦 Locate built APK"
+        id: apk
+        working-directory: south-wallet-v2/south-admin
+        run: |
+          APK=$(find android -name "*.apk" | head -1)
+          echo "path=$APK" >> $GITHUB_OUTPUT
+          echo "Found: $APK"
+
+      - name: "⬆️ Upload APK artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "south-wallet-admin-${{ github.run_number }}"
+          path: "south-wallet-v2/south-admin/${{ steps.apk.outputs.path }}"
+          retention-days: 30
+
+  notify:
+    name: "📣 Build Status"
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: "✅ Build succeeded"
+        if: needs.build.result == 'success'
+        run: echo "✅ Admin app build succeeded — APK uploaded"
+      - name: "❌ Build failed"
+        if: needs.build.result == 'failure'
+        run: echo "❌ Admin app build FAILED — check logs above" && exit 1
