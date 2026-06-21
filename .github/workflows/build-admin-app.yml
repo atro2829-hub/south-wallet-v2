@@ -68,6 +68,9 @@ jobs:
       - name: "🗑️ Remove any API routes (static export incompatible)"
         run: rm -rf south-admin/src/app/api || true
 
+      - name: "🔧 Remove root lockfile (prevents Turbopack multi-lockfile confusion)"
+        run: rm -f package-lock.json || true
+
       - name: "🏗️ Build Next.js static export"
         working-directory: south-admin
         run: npm run build
