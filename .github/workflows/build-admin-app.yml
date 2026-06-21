@@ -73,7 +73,7 @@ jobs:
 
       - name: "🏗️ Build Next.js static export"
         working-directory: south-admin
-        run: npx next build --no-turbopack
+        run: npm run build
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           NEXT_TELEMETRY_DISABLED: 1

@@ -1,24 +1,28 @@
 import type { NextConfig } from "next";
+  import path from "path";
 
-const nextConfig: NextConfig = {
-  output: "export",
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  reactStrictMode: true,
-  images: {
-    unoptimized: true,
-  },
-  trailingSlash: true,
-  // Fix Turbopack multi-lockfile workspace root detection.
-  // Without this, Next.js picks the parent repo root (user app) instead of
-  // this south-admin directory, causing @/* import alias resolution to fail.
-  turbopack: {
-    root: __dirname,
-  },
-};
+  const nextConfig: NextConfig = {
+    output: "export",
+    typescript: {
+      ignoreBuildErrors: true,
+    },
+    eslint: {
+      ignoreDuringBuilds: true,
+    },
+    reactStrictMode: true,
+    images: {
+      unoptimized: true,
+    },
+    trailingSlash: true,
+    // Fix: Turbopack incorrectly picks the parent (user app) as workspace root.
+    // Solution: explicitly set turbopack.root + resolveAlias to force correct @/src mapping.
+    turbopack: {
+      root: path.resolve(__dirname),
+      resolveAlias: {
+        "@": path.resolve(__dirname, "src"),
+      },
+    },
+  };
 
-export default nextConfig;
+  export default nextConfig;
+  
